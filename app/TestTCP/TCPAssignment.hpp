@@ -22,6 +22,12 @@
 
 namespace E
 {
+/* Structure of socket */
+struct socket_block {
+	int socket_fd;
+	uint32_t addr;
+	uint16_t port;
+};
 
 class TCPAssignment : public HostModule, public NetworkModule, public SystemCallInterface, private NetworkLog, private TimerModule
 {
@@ -32,6 +38,7 @@ private:
 	
 	void syscall_socket(UUID syscallUUID, int pid, int param1_int, int param2_int);
 	void syscall_close(UUID syscallUUID, int pid, int param1_int);
+	void syscall_bind(UUID syscallUUID, int pid, int param1_int, struct sockaddr* param2_ptr, socklen_t param3_int);
 public:
 	TCPAssignment(Host* host);
 	virtual void initialize();

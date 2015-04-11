@@ -71,9 +71,9 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 		//		static_cast<socklen_t*>(param.param3_ptr));
 		break;
 	case BIND:
-		//this->syscall_bind(syscallUUID, pid, param.param1_int,
-		//		static_cast<struct sockaddr *>(param.param2_ptr),
-		//		(socklen_t) param.param3_int);`
+		this->syscall_bind(syscallUUID, pid, param.param1_int,
+				static_cast<struct sockaddr *>(param.param2_ptr),
+				(socklen_t) param.param3_int);
 		break;
 	case GETSOCKNAME:
 		//this->syscall_getsockname(syscallUUID, pid, param.param1_int,
@@ -101,6 +101,11 @@ void TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int param1_int, in
 void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 {
 	this->removeFileDescriptor(pid,param1_int);
+	this->returnSystemCall(syscallUUID,0);
+}
+void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int param1_int, sockaddr* param2_ptr, socklen_t param3_int)
+{
+	struct sockaddr_in* sock_info = (sockaddr_in *)param2_ptr;
 	this->returnSystemCall(syscallUUID,0);
 }
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
