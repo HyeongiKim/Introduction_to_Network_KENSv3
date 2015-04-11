@@ -97,6 +97,7 @@ void TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int param1_int, in
 	socket_fd=this->createFileDescriptor(pid);
 	this->returnSystemCall(syscallUUID, socket_fd);
 }
+/* Close a socket. */
 void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 {
 	this->removeFileDescriptor(pid,param1_int);
