@@ -3,6 +3,7 @@
  *
  *  Created on: 2014. 11. 20.
  *      Author: 근홍
+ *	  Modified: 김현기 20110032, 심영보 20110560
  */
 
 
@@ -46,10 +47,10 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 	switch(param.syscallNumber)
 	{
 	case SOCKET:
-		//this->syscall_socket(syscallUUID, pid, param.param1_int, param.param2_int);
+		this->syscall_socket(syscallUUID, pid, param.param1_int, param.param2_int);
 		break;
 	case CLOSE:
-		//this->syscall_close(syscallUUID, pid, param.param1_int);
+		this->syscall_close(syscallUUID, pid, param.param1_int);
 		break;
 	case READ:
 		//this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
@@ -72,7 +73,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 	case BIND:
 		//this->syscall_bind(syscallUUID, pid, param.param1_int,
 		//		static_cast<struct sockaddr *>(param.param2_ptr),
-		//		(socklen_t) param.param3_int);
+		//		(socklen_t) param.param3_int);`
 		break;
 	case GETSOCKNAME:
 		//this->syscall_getsockname(syscallUUID, pid, param.param1_int,
@@ -88,7 +89,20 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 		assert(0);
 	}
 }
-
+/* Open a new socket. It returns filedescriptor (integer) */
+void TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int param1_int, int param2_int)
+{
+	int socket_fd;
+	
+	socket_fd=this->createFileDescriptor(pid);
+	this->returnSystemCall(syscallUUID, socket_fd);
+}
+/* Close a socket. */
+void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
+{
+	this->removeFileDescriptor(pid,param1_int);
+	this->returnSystemCall(syscallUUID,0);
+}
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 {
 
