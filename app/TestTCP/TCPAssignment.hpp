@@ -3,6 +3,7 @@
  *
  *  Created on: 2014. 11. 20.
  *      Author: 근홍
+ * 	  Modified: 김현기 20110032, 심영보 20110560
  */
 
 #ifndef E_TCPASSIGNMENT_HPP_
@@ -28,7 +29,9 @@ private:
 
 private:
 	virtual void timerCallback(void* payload) final;
-
+	
+	void syscall_socket(UUID syscallUUID, int pid, int param1_int, int param2_int);
+	void syscall_close(UUID syscallUUID, int pid, int param1_int);
 public:
 	TCPAssignment(Host* host);
 	virtual void initialize();
