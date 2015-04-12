@@ -76,9 +76,9 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 				(socklen_t) param.param3_int);
 		break;
 	case GETSOCKNAME:
-		//this->syscall_getsockname(syscallUUID, pid, param.param1_int,
-		//		static_cast<struct sockaddr *>(param.param2_ptr),
-		//		static_cast<socklen_t*>(param.param3_ptr));
+		this->syscall_getsockname(syscallUUID, pid, param.param1_int,
+				static_cast<struct sockaddr *>(param.param2_ptr),
+				static_cast<socklen_t*>(param.param3_ptr));
 		break;
 	case GETPEERNAME:
 		//this->syscall_getpeername(syscallUUID, pid, param.param1_int,
@@ -99,15 +99,16 @@ void TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int param1_int, in
 	this->returnSystemCall(syscallUUID, socket_fd);
 }
 
-/* Close a socket. If success, returns 0 else 1.*/
+/* Close a socket. */
 void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 {
+	this->remove_socketlist(param1_int);
 	this->removeFileDescriptor(pid,param1_int);
 	this->returnSystemCall(syscallUUID,0);
 }
 
 /* Bind a socket. If overlapped, return 1 else 0. */
-void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int param1_int, sockaddr* param2_ptr, socklen_t param3_int)
+void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int param1_int, struct sockaddr* param2_ptr, socklen_t param3_int)
 {
 	if (this->check_overlap(param1_int, param2_ptr))
 		this->returnSystemCall(syscallUUID,1);
@@ -116,13 +117,7 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int param1_int, sock
 }
 
 /* Check overlapping. It returns true when there is no overlapping, 
-   else add to socket_list and return false.
- * 		Address is consist of ip_address and port_number (sockaddr_in)
- * 		143.248.234.2:5555 and 10.0.0.2:5555 do not overlap
- * 		143.248.234.2:5555 and 0.0.0.0:5555 overlap (INADDR_ANY)
- * 		143.248.234.2:5555 and 143.248.234.3:5555 do not overlap
- * 		0.0.0.0:5555 and 0.0.0.0:5556 do not overlap (different port)
- * 		Closed sockets do not overlap with any socket */
+   else add to socket_list and return false. */
 bool TCPAssignment::check_overlap(int fd, sockaddr* addr)
 {
 	int check_fd;
@@ -137,40 +132,36 @@ bool TCPAssignment::check_overlap(int fd, sockaddr* addr)
 
 	for(cursor=this->socket_list.begin(); cursor != this->socket_list.end(); ++cursor)
 	{
-		//bool addr_eq;
-		//bool port_eq;
 		/* Already socket_fd exists in socket_list */
 		if((*cursor).socket_fd == check_fd)
 			return true;
-		/* Already same addr & port exist in socket_list */
-		/*
-		if((addr_eq = ((*cursor).addr == check_addr)) || (port_eq = ((*cursor).port == check_port))){
-			if(addr_eq && port_eq)
-				return true;
-			else if (addr_eq && ((*cursor).addr != 0) && !port_eq) // Discard 0.0.0.0:5555 and 0.0.0.0:5556 case.
-				return true;
-			else if (port_eq && ( ((*cursor).addr == 0) || (check_addr == 0) )) //143.248.234.2:5555 and 0.0.0.0:5555 overlap (INADDR_ANY)
-				return true;
-		}
-		*/
+
+		/* Bind rule */
 		if(( ((*cursor).addr == check_addr) || ((*cursor).addr == INADDR_ANY) || check_addr == INADDR_ANY )  && ((*cursor).port == check_port))
-			return true;
-		/*
-		else if (addr_eq && !port_eq){ 
-			if ((*cursor).addr != 0)// Discard 0.0.0.0:5555 and 0.0.0.0:5556 case.
-				return true;
-		}
-		
-		if (!addr_eq && port_eq){
-			if ((*cursor).addr == 0 ) //143.248.234.2:5555 and 0.0.0.0:5555 overlap (INADDR_ANY)
-				return true;
-		}*/
-		
+			return true;	
 	}
 	this->add_socketlist(check_fd, check_addr, check_port);
 	return false;
 }
 
+/* Get a socket name */
+void TCPAssignment::syscall_getsockname(UUID syscallUUID,int pid,int param1_int, struct sockaddr* param2_ptr, socklen_t* param3_ptr)
+{
+	std::list<struct socket_block>::iterator sock;
+	
+	/* Find socket */
+	sock = this->find_socketlist(param1_int);
+	
+	/* The socket_fd (param1_int) does not exist in socket_list */
+	if (sock == this->socket_list.end())
+		this->returnSystemCall(syscallUUID, 1);
+	
+	((struct sockaddr_in *) param2_ptr)->sin_family = AF_INET;
+	((struct sockaddr_in *) param2_ptr)->sin_addr.s_addr = (*sock).addr;
+	((struct sockaddr_in *) param2_ptr)->sin_port = (*sock).port;;
+	
+	this->returnSystemCall(syscallUUID, 0);
+}
 /* Add new socket block to socket_list
    Copy socket_fd, addr and port from args to new 'socket_block sock' */
 void TCPAssignment::add_socketlist(int fd, uint32_t addr, unsigned short int port)
@@ -181,6 +172,32 @@ void TCPAssignment::add_socketlist(int fd, uint32_t addr, unsigned short int por
 	sock.port = port;
 
 	this->socket_list.push_back(sock);
+}
+
+/* Remove socket from socket_list */
+void TCPAssignment::remove_socketlist(int fd)
+{
+	std::list<struct socket_block>::iterator cursor;
+	
+	cursor=this->socket_list.begin();
+	
+	while(cursor != this->socket_list.end()){
+		if ((*cursor).socket_fd == fd)
+			this->socket_list.erase(cursor);
+		++cursor;
+	}
+}
+
+/* Find a socket. If it does not exist in list, return list.end(). */
+std::list<struct socket_block>::iterator  TCPAssignment::find_socketlist(int fd)
+{
+	std::list<struct socket_block>::iterator cursor;
+	
+	for(cursor=this->socket_list.begin(); cursor != this->socket_list.end(); ++cursor){
+		if((*cursor).socket_fd == fd)
+			return cursor;
+	}
+	return this->socket_list.end();
 }
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 {
