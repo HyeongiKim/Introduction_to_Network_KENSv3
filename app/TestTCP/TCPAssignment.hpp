@@ -21,14 +21,7 @@
 #include <E/E_TimerModule.hpp>
 
 namespace E
-{
-	/* Structure of socket */
-	struct socket_block {
-		int socket_fd;
-		uint32_t addr;
-		unsigned short int port;
-	};
-	
+{	
 	/* TCP STATE */
 	enum TCP_STATE {
 		CLOSED,
@@ -42,12 +35,16 @@ namespace E
 		TIME_WAIT,
 		LAST_ACK 
 	};
+
+	/* TCP CONTEXT */
 	struct tcp_context {
 		int socket_fd;
-		uint32_t addr;
-		unsigned short int port;
-		bool is_bound;
-		enum TCP_STATE tcp_state;
+		uint32_t src_addr;
+		unsigned short int src_port;
+		uint32_t dest_addr;
+		unsigned short int dest_port;
+		bool is_bound = false;;
+		TCP_STATE tcp_state = CLOSED;
 		int seq_num;
 	};
 
@@ -55,8 +52,8 @@ class TCPAssignment : public HostModule, public NetworkModule, public SystemCall
 {
 private:
 	/* list of socket_blocks */
-	std::list< struct socket_block > socket_list;
-
+	std::list< struct tcp_context > tcp_list;
+	int backlog;
 private:
 	virtual void timerCallback(void* payload) final;
 	/* Assignment */
@@ -65,9 +62,10 @@ private:
 	void syscall_bind(UUID syscallUUID, int pid, int param1_int, struct sockaddr* param2_ptr, socklen_t param3_int);
 	bool check_overlap(int fd, sockaddr* addr);
 	void syscall_getsockname(UUID syscallUUID,int pid,int param1_int, struct sockaddr* param2_ptr, socklen_t* param3_ptr);
-	void add_socketlist(int fd, uint32_t addr, unsigned short int port);
-	void remove_socketlist(int fd);
-	std::list<struct socket_block>::iterator find_socketlist(int fd);
+	void syscall_listen(UUID syscallUUID, int pid, int fd, int backlog);
+	void add_tcplist(int fd, uint32_t addr, unsigned short int port);
+	void remove_tcplist(int fd);
+	std::list<struct tcp_context>::iterator find_tcplist(int fd);
 public:
 	TCPAssignment(Host* host);
 	virtual void initialize();

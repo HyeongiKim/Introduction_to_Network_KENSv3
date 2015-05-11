@@ -63,7 +63,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 		//		static_cast<struct sockaddr*>(param.param2_ptr), (socklen_t)param.param3_int);
 		break;
 	case LISTEN:
-		//this->syscall_listen(syscallUUID, pid, param.param1_int, param.param2_int);
+		this->syscall_listen(syscallUUID, pid, param.param1_int, param.param2_int);
 		break;
 	case ACCEPT:
 		//this->syscall_accept(syscallUUID, pid, param.param1_int,
@@ -102,7 +102,7 @@ void TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int param1_int, in
 /* Close a socket. */
 void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 {
-	this->remove_socketlist(param1_int);
+	this->remove_tcplist(param1_int);
 	this->removeFileDescriptor(pid,param1_int);
 	this->returnSystemCall(syscallUUID,0);
 }
@@ -117,87 +117,100 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int param1_int, stru
 }
 
 /* Check overlapping. It returns true when there is no overlapping, 
-   else add to socket_list and return false. */
+   else add to tcp_list and return false. */
 bool TCPAssignment::check_overlap(int fd, sockaddr* addr)
 {
 	int check_fd;
 	uint32_t check_addr;
 	unsigned short int check_port;
-	std::list<struct socket_block>::iterator cursor;
+	std::list<struct tcp_context>::iterator cursor;
 	
 	struct sockaddr_in* check_sock = (sockaddr_in *)addr;
 	check_fd = fd;
 	check_addr = check_sock->sin_addr.s_addr;
 	check_port = check_sock->sin_port;
 
-	for(cursor=this->socket_list.begin(); cursor != this->socket_list.end(); ++cursor)
+	for(cursor=this->tcp_list.begin(); cursor != this->tcp_list.end(); ++cursor)
 	{
-		/* Already socket_fd exists in socket_list */
+		/* Already socket_fd exists in tcp_list */
 		if((*cursor).socket_fd == check_fd)
 			return true;
 
 		/* Bind rule */
-		if(( ((*cursor).addr == check_addr) || ((*cursor).addr == INADDR_ANY) || check_addr == INADDR_ANY )  && ((*cursor).port == check_port))
+		if(( ((*cursor).src_addr == check_addr) || ((*cursor).src_addr == INADDR_ANY) || check_addr == INADDR_ANY )  && ((*cursor).src_port == check_port))
 			return true;	
 	}
-	this->add_socketlist(check_fd, check_addr, check_port);
+	this->add_tcplist(check_fd, check_addr, check_port);
 	return false;
 }
 
 /* Get a socket name */
 void TCPAssignment::syscall_getsockname(UUID syscallUUID,int pid,int param1_int, struct sockaddr* param2_ptr, socklen_t* param3_ptr)
 {
-	std::list<struct socket_block>::iterator sock;
+	std::list<struct tcp_context>::iterator sock;
 	
 	/* Find socket */
-	sock = this->find_socketlist(param1_int);
+	sock = this->find_tcplist(param1_int);
 	
-	/* The socket_fd (param1_int) does not exist in socket_list */
-	if (sock == this->socket_list.end())
+	/* The socket_fd (param1_int) does not exist in tcp_list */
+	if (sock == this->tcp_list.end())
 		this->returnSystemCall(syscallUUID, 1);
 	
 	((struct sockaddr_in *) param2_ptr)->sin_family = AF_INET;
-	((struct sockaddr_in *) param2_ptr)->sin_addr.s_addr = (*sock).addr;
-	((struct sockaddr_in *) param2_ptr)->sin_port = (*sock).port;;
+	((struct sockaddr_in *) param2_ptr)->sin_addr.s_addr = (*sock).src_addr;
+	((struct sockaddr_in *) param2_ptr)->sin_port = (*sock).src_port;;
 	
 	this->returnSystemCall(syscallUUID, 0);
 }
-/* Add new socket block to socket_list
-   Copy socket_fd, addr and port from args to new 'socket_block sock' */
-void TCPAssignment::add_socketlist(int fd, uint32_t addr, unsigned short int port)
+/* Listen param1 = sockfd, param2 = backlog */
+void TCPAssignment::syscall_listen(UUID syscallUUID,int pid,int fd,int backlog)
 {
-	socket_block sock;
-	sock.socket_fd = fd;
-	sock.addr = addr;
-	sock.port = port;
+	std::list<struct tcp_context>::iterator sock;
+	sock = this->find_tcplist(fd);
 
-	this->socket_list.push_back(sock);
+	if(!((*sock).is_bound))
+		this->returnSystemCall(syscallUUID,1);
+	(*sock).tcp_state = E::LISTEN;
+	this->returnSystemCall(syscallUUID,0);
 }
 
-/* Remove socket from socket_list */
-void TCPAssignment::remove_socketlist(int fd)
+/* Add new socket block to tcp_list
+   Copy socket_fd, addr and port from args to new 'tcp_context sock' */
+void TCPAssignment::add_tcplist(int fd, uint32_t addr, unsigned short int port)
 {
-	std::list<struct socket_block>::iterator cursor;
+	tcp_context sock;
+	sock.socket_fd = fd;
+	sock.src_addr = addr;
+	sock.src_port = port;
+	sock.is_bound = true;
 	
-	cursor=this->socket_list.begin();
+	this->tcp_list.push_back(sock);
+}
+
+/* Remove socket from tcp_list */
+void TCPAssignment::remove_tcplist(int fd)
+{
+	std::list<struct tcp_context>::iterator cursor;
 	
-	while(cursor != this->socket_list.end()){
+	cursor=this->tcp_list.begin();
+	
+	while(cursor != this->tcp_list.end()){
 		if ((*cursor).socket_fd == fd)
-			this->socket_list.erase(cursor);
+			this->tcp_list.erase(cursor);
 		++cursor;
 	}
 }
 
 /* Find a socket. If it does not exist in list, return list.end(). */
-std::list<struct socket_block>::iterator  TCPAssignment::find_socketlist(int fd)
+std::list<struct tcp_context>::iterator  TCPAssignment::find_tcplist(int fd)
 {
-	std::list<struct socket_block>::iterator cursor;
+	std::list<struct tcp_context>::iterator cursor;
 	
-	for(cursor=this->socket_list.begin(); cursor != this->socket_list.end(); ++cursor){
+	for(cursor=this->tcp_list.begin(); cursor != this->tcp_list.end(); ++cursor){
 		if((*cursor).socket_fd == fd)
 			return cursor;
 	}
-	return this->socket_list.end();
+	return this->tcp_list.end();
 }
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 {
