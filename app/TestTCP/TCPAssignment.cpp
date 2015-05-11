@@ -201,7 +201,24 @@ std::list<struct socket_block>::iterator  TCPAssignment::find_socketlist(int fd)
 }
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 {
-
+	//Simple L3 forwarding
+	//extract address
+	uint8_t src_ip[4];
+	uint8_t dest_ip[4]; 
+	packet->readData(14+12, src_ip, 4); 
+	packet->readData(14+16, dest_ip, 4);
+	Packet* myPacket = this->clonePacket(packet); //prepare to send
+	
+	//swap src and dest
+	myPacket->writeData(14+12, dest_ip, 4); 
+	myPacket->writeData(14+16, src_ip, 4);
+	
+	//IP module will fill rest of IP header, 
+	//send it to correct network interface 
+	this->sendPacket("IPv4", myPacket);
+	
+	//given packet is my responsibility
+	this->freePacket(packet);
 }
 
 void TCPAssignment::timerCallback(void* payload)

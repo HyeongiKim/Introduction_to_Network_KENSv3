@@ -22,18 +22,41 @@
 
 namespace E
 {
-/* Structure of socket */
-struct socket_block {
-	int socket_fd;
-	uint32_t addr;
-	unsigned short int port;
-};
+	/* Structure of socket */
+	struct socket_block {
+		int socket_fd;
+		uint32_t addr;
+		unsigned short int port;
+	};
+	
+	/* TCP STATE */
+	enum TCP_STATE {
+		CLOSED,
+		LISTEN,
+		SYN_SENT,
+		SYN_RCVD,
+		ESTABLISHED,
+		FIN_WAIT1,
+		FIN_WAIT2,
+		CLOSING,
+		TIME_WAIT,
+		LAST_ACK 
+	};
+	struct tcp_context {
+		int socket_fd;
+		uint32_t addr;
+		unsigned short int port;
+		bool is_bound;
+		enum TCP_STATE tcp_state;
+		int seq_num;
+	};
 
 class TCPAssignment : public HostModule, public NetworkModule, public SystemCallInterface, private NetworkLog, private TimerModule
 {
 private:
 	/* list of socket_blocks */
 	std::list< struct socket_block > socket_list;
+
 private:
 	virtual void timerCallback(void* payload) final;
 	/* Assignment */
