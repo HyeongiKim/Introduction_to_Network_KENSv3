@@ -158,7 +158,7 @@ void TCPAssignment::syscall_getsockname(UUID syscallUUID,int pid,int param1_int,
 	
 	((struct sockaddr_in *) param2_ptr)->sin_family = AF_INET;
 	((struct sockaddr_in *) param2_ptr)->sin_addr.s_addr = (*sock).src_addr;
-	((struct sockaddr_in *) param2_ptr)->sin_port = (*sock).src_port;;
+	((struct sockaddr_in *) param2_ptr)->sin_port = (*sock).src_port;
 	
 	this->returnSystemCall(syscallUUID, 0);
 }

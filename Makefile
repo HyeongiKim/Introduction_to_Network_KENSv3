@@ -53,6 +53,11 @@ test_part4: test_part3
 	@echo "Note that passing this test does not mean that you are finished."
 	@echo "Check the pcap file that you have implemented congestion control well."
 
+test_accept: test_part1
+	@echo "Running test cases for listen & accept"
+	@build/testTCP --gtest_filter="TestEnv_Reliable.TestAccept_*:TestEnv_Any.TestAccept_*"
+
+
 doxygen:
 	doxygen doxygen/Doxyfile
 
