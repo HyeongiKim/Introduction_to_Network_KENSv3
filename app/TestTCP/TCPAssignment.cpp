@@ -168,7 +168,7 @@ void TCPAssignment::syscall_listen(UUID syscallUUID,int pid,int fd,int backlog)
 {
 	std::list<struct tcp_context>::iterator sock;
 	sock = this->find_tcplist(fd);
-
+	this->backlog = backlog;
 	if(!((*sock).is_bound))
 		this->returnSystemCall(syscallUUID,1);
 	(*sock).tcp_state = E::LISTEN;
@@ -232,8 +232,9 @@ void TCPAssignment::remove_tcplist(int fd)
 	
 	while(cursor != this->tcp_list.end()){
 		if ((*cursor).socket_fd == fd)
-			this->tcp_list.erase(cursor);
-		++cursor;
+			cursor=this->tcp_list.erase(cursor);
+		else
+			++cursor;
 	}
 }
 
@@ -262,14 +263,14 @@ int TCPAssignment::find_listen()
 }
 
 //find connection having seq_num in the pending list
-std::list< struct tcp_context >::iterator* TCPAssignment::find_conn(int seq_num)
+std::list< struct tcp_context >::iterator TCPAssignment::find_conn(int seq_num)
 {
 	std::list< struct tcp_context >::iterator cursor;
 	for(cursor=this->pending_conn_list.begin(); cursor != this->pending_conn_list.end(); ++cursor){
 		if((*cursor).seq_num == seq_num)
-			return &cursor;
+			return cursor;
 	}
-	return NULL;
+	return this->pending_conn_list.end();
 }
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
@@ -344,34 +345,35 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 	}
 	else if(!SYN && ACK)//ACK
 	{
-		std::list<struct tcp_context>::iterator* iter;
+		std::list<struct tcp_context>::iterator iter;
 		struct tcp_context estb_conn;
 		//find following connection
 		iter = this->find_conn(int(ntohl((uint32_t) ack_num[0]))-1);
-		if(iter == NULL)
+		if(iter == this->pending_conn_list.end())
 		{
 			this->freePacket(packet);
 			return;
 		}
-		estb_conn = **iter;
+		estb_conn = *iter;
 		//move the connection from pending list to estb list
-		this->pending_conn_list.erase(*iter);
+		this->pending_conn_list.erase(iter);
 		estb_conn.tcp_state = E::ESTABLISHED;
 		this->estb_conn_list.push_back(estb_conn);
 		if(this->accept_flag)
 		{
 			this->accept_flag = false;
 			//pop the established connection and make a new file descriptor
-			struct tcp_context estb_conn;
+			struct tcp_context finished_conn;
 			int socket_fd;
-			estb_conn = this->estb_conn_list.front();
+			finished_conn = this->estb_conn_list.front();
 			this->estb_conn_list.pop_front();
 			socket_fd = this->createFileDescriptor(this->ap_cont.server_sock_fd);
-			estb_conn.socket_fd = socket_fd;
+			finished_conn.socket_fd = socket_fd;
 			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_family = AF_INET;
-			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_addr.s_addr = ntohl(estb_conn.src_addr);
-			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_port = ntohs(estb_conn.src_port);;
-			this->tcp_list.push_back(estb_conn);
+			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_addr.s_addr = ntohl(finished_conn.src_addr);
+			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_port = ntohs(finished_conn.src_port);;
+			this->tcp_list.push_back(finished_conn);
+			this->freePacket(packet);
 			this->returnSystemCall(this->ap_cont.syscallUUID,0);
 		}
 	}

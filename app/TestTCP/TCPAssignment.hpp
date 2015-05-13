@@ -94,7 +94,7 @@ private:
 	void remove_tcplist(int fd);
 	std::list< struct tcp_context >::iterator find_tcplist(int fd);
 	int find_listen();
-	std::list< struct tcp_context >::iterator* find_conn(int seq_num);
+	std::list< struct tcp_context >::iterator find_conn(int seq_num);
 public:
 	TCPAssignment(Host* host);
 	virtual void initialize();
