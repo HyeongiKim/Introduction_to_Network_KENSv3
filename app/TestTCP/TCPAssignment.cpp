@@ -286,6 +286,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 	uint8_t ack_num[4];
 	bool SYN, ACK;
 	int sock_fd;
+	int tmp_num;
 	//struct sockaddr *host_addr = (struct sockaddr *) malloc(sizeof(sockaddr));
 
 	packet->readData(14+12, src_ip, 4); 
@@ -323,28 +324,40 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 		//build new connection
 		struct tcp_context new_conn;
 		new_conn.src_addr = (uint32_t) src_ip[0];
-		new_conn.src_port = (uint32_t) src_port[0];
+		new_conn.src_port = (uint16_t) src_port[0];
 		new_conn.dest_addr = (uint32_t) dest_ip[0];
-		new_conn.dest_port = (uint32_t) dest_port[0];
-		new_conn.seq_num = this->seq_num++;
+		new_conn.dest_port = (uint16_t) dest_port[0];
+		new_conn.seq_num = htonl(this->seq_num++);
 		new_conn.tcp_state = E::SYN_RCVD;
 		//push in to pending connection list
 		this->pending_conn_list.push_back(new_conn);
 
+		printf("--------------------------Here3-----------------------\nsrc_addr: %x\nsrc_port: %d\ndest_addr: %x\ndest_port: %d\nseq_num: %d\n",new_conn.src_addr,new_conn.src_port,new_conn.dest_addr,new_conn.dest_port,*(int *)seq_num);
+
+		tmp_num = ntohl(*(int *)seq_num) + 1;
+		tmp_num = htonl(tmp_num);
 		//Send ACK message
-		Packet* ACK_pkt = this->clonePacket(packet);
-		ACK_pkt->writeData(14+12, dest_ip, 4);
-		ACK_pkt->writeData(14+16, src_ip, 4);
-		ACK_pkt->writeData(14+IHL[0]*4, dest_port, 2);
-		ACK_pkt->writeData(14+IHL[0]*4+2, src_port, 2);
-		ACK_pkt->writeData(14+IHL[0]*4+4, &new_conn.seq_num,4);
-		ACK_pkt->writeData(14+IHL[0]*4+8, seq_num+1,4);
-		tmp[0] = 0x12;
+		Packet* SYN_pkt = this->clonePacket(packet);
+		SYN_pkt->writeData(14+12, dest_ip, 4);
+		SYN_pkt->writeData(14+16, src_ip, 4);
+		SYN_pkt->writeData(14+IHL[0]*4, dest_port, 2);
+		SYN_pkt->writeData(14+IHL[0]*4+2, src_port, 2);
+		SYN_pkt->writeData(14+IHL[0]*4+4, &(new_conn.seq_num),4);
+		tmp[0] = 0x2;
+		SYN_pkt->writeData(14+IHL[0]*4+13, tmp,1);
+		this->sendPacket("IPv4", SYN_pkt);
+
+		Packet* ACK_pkt = this->clonePacket(SYN_pkt);
+		ACK_pkt->writeData(14+IHL[0]*4+8, &tmp_num,4);
+		tmp[0] = 0x10;
 		ACK_pkt->writeData(14+IHL[0]*4+13, tmp,1);
 		this->sendPacket("IPv4", ACK_pkt);
+
+		printf("------------------Here----------------\nrecieved seqnum: %d SYN: %d\n", ntohl(tmp_num), this->seq_num-1);
 	}
 	else if(!SYN && ACK)//ACK
 	{
+		printf("------------------Here----------------\nACK: %d\n", (int)ack_num[0]);
 		std::list<struct tcp_context>::iterator iter;
 		struct tcp_context estb_conn;
 		//find following connection
@@ -379,7 +392,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 	}
 	else if(SYN && ACK)//SYNACK
 	{
-
+		printf("--------------------------Here2-----------------------\n");
 	}
 	//given packet is my responsibility
 	this->freePacket(packet);
