@@ -15,6 +15,7 @@ all: depend
 	done
 
 clean:
+	rm log.txt
 	rm -f *.o $(OUTPUT_DIR)/*.pcap *.pcap
 	rm -rf $(OUTPUT_DIR)/html
 	@$(MAKE) --directory=src clean
@@ -55,7 +56,7 @@ test_part4: test_part3
 
 test_accept: test_part1
 	@echo "Running test cases for listen & accept"
-	@build/testTCP --gtest_filter=*Accept*
+	@build/testTCP --gtest_filter=*Accept* 2> log.txt
 
 
 doxygen:

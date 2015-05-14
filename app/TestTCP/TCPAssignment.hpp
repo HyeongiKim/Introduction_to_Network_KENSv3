@@ -36,6 +36,14 @@ namespace E
 		LAST_ACK 
 	};
 
+	struct accept_param_container{
+			UUID syscallUUID;
+			//int pid;
+			//int server_sock_fd;
+			struct sockaddr* client_addr;
+			socklen_t* client_len;
+		};
+
 	/* TCP CONTEXT */
 	struct tcp_context {
 		int pid;
@@ -47,27 +55,11 @@ namespace E
 		bool is_bound = false;;
 		TCP_STATE tcp_state = CLOSED;
 		int seq_num;
-		/*
-		tcp_context& operator = (const tcp_context& t){
-			this->dest_addr = t.dest_addr;
-			this->dest_port = t.dest_port;
-			this->is_bound = t.is_bound;
-			this->seq_num = t.seq_num;
-			this->socket_fd = t.socket_fd;
-			this->src_addr = t.src_addr;
-			this->src_port = t.src_port;
-			this->tcp_state = t.tcp_state;
-			return *this;
-		}
-		*/
-	};
-
-	struct accept_param_container{
-		UUID syscallUUID;
-		int pid;
-		int server_sock_fd;
-		struct sockaddr* client_addr;
-		socklen_t* client_len;
+		struct accept_param_container ap_cont;
+		std::list< struct tcp_context > pending_conn_list;
+		std::list< struct tcp_context > estb_conn_list;
+		unsigned int backlog;
+		unsigned int accept_cnt = 0;
 	};
 
 class TCPAssignment : public HostModule, public NetworkModule, public SystemCallInterface, private NetworkLog, private TimerModule
@@ -76,11 +68,6 @@ private:
 	/* list of socket_blocks */
 	std::list< struct tcp_context > tcp_list;
 	int seq_num = 0;
-	unsigned int backlog;
-	unsigned int accept_cnt = 0;
-	struct accept_param_container ap_cont;
-	std::list< struct tcp_context > pending_conn_list;
-	std::list< struct tcp_context > estb_conn_list;
 private:
 	virtual void timerCallback(void* payload) final;
 	/* Assignment */
@@ -94,9 +81,9 @@ private:
 	void syscall_accept(UUID syscallUUID, int pid, int param1_int,struct sockaddr* param2_ptr, socklen_t* param3_ptr);
 	void add_tcplist(int fd, uint32_t addr, unsigned short int port, int pid);
 	void remove_tcplist(int fd);
-	std::list< struct tcp_context >::iterator find_tcplist(int fd, int pid);
-	int find_listen();
-	std::list< struct tcp_context >::iterator find_conn(int seq_num);
+	std::list< struct tcp_context >::iterator find_tcplist(int fd);
+	std::list<struct tcp_context>::iterator find_listen(uint16_t port);
+	std::list< struct tcp_context >::iterator find_conn(int seq_num, std::list< struct tcp_context > *pend_conn_list_ptr);
 	uint16_t one_sum(const uint8_t* buffer, size_t size);
 	uint16_t tcp_check_sum(uint32_t source, uint32_t dest, const uint8_t* tcp_seg, size_t length);
 
