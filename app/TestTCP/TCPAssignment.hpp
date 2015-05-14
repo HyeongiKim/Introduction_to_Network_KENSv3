@@ -76,7 +76,7 @@ private:
 	std::list< struct tcp_context > tcp_list;
 	int seq_num = 0;
 	unsigned int backlog;
-	bool accept_flag = false;
+	unsigned int accept_cnt = 0;
 	struct accept_param_container ap_cont;
 	std::list< struct tcp_context > pending_conn_list;
 	std::list< struct tcp_context > estb_conn_list;
@@ -95,6 +95,9 @@ private:
 	std::list< struct tcp_context >::iterator find_tcplist(int fd);
 	int find_listen();
 	std::list< struct tcp_context >::iterator find_conn(int seq_num);
+	uint16_t one_sum(const uint8_t* buffer, size_t size);
+	uint16_t tcp_check_sum(uint32_t source, uint32_t dest, const uint8_t* tcp_seg, size_t length);
+
 public:
 	TCPAssignment(Host* host);
 	virtual void initialize();

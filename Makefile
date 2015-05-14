@@ -55,7 +55,7 @@ test_part4: test_part3
 
 test_accept: test_part1
 	@echo "Running test cases for listen & accept"
-	@build/testTCP --gtest_filter="TestEnv_Any.TestAccept_*"
+	@build/testTCP --gtest_filter=*Accept*
 
 
 doxygen:

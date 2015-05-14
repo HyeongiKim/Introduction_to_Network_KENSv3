@@ -166,6 +166,7 @@ void TCPAssignment::syscall_getsockname(UUID syscallUUID,int pid,int param1_int,
 /* Listen param1 = sockfd, param2 = backlog */
 void TCPAssignment::syscall_listen(UUID syscallUUID,int pid,int fd,int backlog)
 {
+	printf("-----------------------LISTEN--------------------\nbacklog = %u\n",backlog);
 	std::list<struct tcp_context>::iterator sock;
 	sock = this->find_tcplist(fd);
 	this->backlog = backlog;
@@ -177,6 +178,7 @@ void TCPAssignment::syscall_listen(UUID syscallUUID,int pid,int fd,int backlog)
 
 void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int param1_int,struct sockaddr* param2_ptr, socklen_t* param3_ptr)
 {
+	printf("--------------------ACCEPT----------------\n");
 	//return false if listen is not called yet
 	if(this->find_listen() != param1_int)
 		this->returnSystemCall(syscallUUID,1);
@@ -190,7 +192,7 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int param1_int,str
 		this->ap_cont.server_sock_fd = param1_int;
 		this->ap_cont.client_addr = param2_ptr;
 		ap_cont.client_len = param3_ptr;
-		this->accept_flag = true;
+		this->accept_cnt++;
 		return;
 	}
 	else
@@ -204,9 +206,10 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int param1_int,str
 		estb_conn.socket_fd = socket_fd;
 		((struct sockaddr_in *) param2_ptr)->sin_family = AF_INET;
 		((struct sockaddr_in *) param2_ptr)->sin_addr.s_addr = ntohl(estb_conn.src_addr);
-		((struct sockaddr_in *) param2_ptr)->sin_port = ntohs(estb_conn.src_port);;
+		((struct sockaddr_in *) param2_ptr)->sin_port = estb_conn.src_port;
 		this->tcp_list.push_back(estb_conn);
-		this->returnSystemCall(syscallUUID,0);
+		printf("--------------------RETURN1----------------\n");
+		this->returnSystemCall(syscallUUID,socket_fd);
 	}
 }
 
@@ -267,10 +270,69 @@ std::list< struct tcp_context >::iterator TCPAssignment::find_conn(int seq_num)
 {
 	std::list< struct tcp_context >::iterator cursor;
 	for(cursor=this->pending_conn_list.begin(); cursor != this->pending_conn_list.end(); ++cursor){
-		if((*cursor).seq_num == seq_num)
+		if(ntohl((*cursor).seq_num) == seq_num)
 			return cursor;
 	}
 	return this->pending_conn_list.end();
+}
+
+struct pseudoheader
+{
+	uint32_t source;
+	uint32_t destination;
+	uint8_t zero;
+	uint8_t protocol;
+	uint16_t length;
+}__attribute__((packed));
+
+uint16_t TCPAssignment::one_sum(const uint8_t* buffer, size_t size)
+{
+	bool upper = true;
+	uint32_t sum = 0;
+	for(size_t k=0; k<size; k++)
+	{
+		if(upper)
+		{
+			sum += buffer[k] << 8;
+		}
+		else
+		{
+			sum += buffer[k];
+		}
+
+		upper = !upper;
+	}
+
+	do
+	{
+		sum = (sum & 0xFFFF) + (sum >> 16);
+	}while((sum & 0xFFFF) != sum);
+
+	return (uint16_t)sum;
+}
+
+
+uint16_t TCPAssignment::tcp_check_sum(uint32_t source, uint32_t dest, const uint8_t* tcp_seg, size_t length)
+{
+	if(length < 20)
+		return 0;
+	struct pseudoheader pheader;
+	pheader.source = source;
+	pheader.destination = dest;
+	pheader.zero = 0;
+	pheader.protocol = IPPROTO_TCP;
+	pheader.length = htons(length);
+
+	uint32_t sum = this->one_sum((uint8_t*)&pheader, sizeof(pheader));
+	sum += this->one_sum(tcp_seg, length);
+
+	do
+	{
+		sum = (sum & 0xFFFF) + (sum >> 16);
+	}while((sum & 0xFFFF) != sum);
+
+
+	return ~(uint16_t)sum;
 }
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
@@ -284,6 +346,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 	uint8_t IHL[1], tmp[1];
 	uint8_t seq_num[4];
 	uint8_t ack_num[4];
+	uint16_t checksum=0;
+	uint8_t tcp_hd[20];
 	bool SYN, ACK;
 	int sock_fd;
 	int tmp_num;
@@ -303,11 +367,6 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
 	if(SYN && !ACK)//SYN
 	{
-		/*
-		((struct sockaddr_in *)host_addr)->sin_family = AF_INET;
-		((struct sockaddr_in *)host_addr)->sin_addr.s_addr = ntohl((uint32_t) src_ip);
-		((struct sockaddr_in *)host_addr)->sin_port = ntohs((uint32_t) src_port);
-		 */
 		//check if the listen is called.
 		sock_fd = find_listen();
 		if(sock_fd == -1)
@@ -316,23 +375,26 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			return;
 		}
 		//check pending list size doesn't exceed backlog value
+
+
 		if(this->pending_conn_list.size() >= this->backlog)
 		{
 			this->freePacket(packet);
 			return;
 		}
+		//printf("-------3---------\n");
 		//build new connection
 		struct tcp_context new_conn;
-		new_conn.src_addr = (uint32_t) src_ip[0];
-		new_conn.src_port = (uint16_t) src_port[0];
-		new_conn.dest_addr = (uint32_t) dest_ip[0];
-		new_conn.dest_port = (uint16_t) dest_port[0];
+		new_conn.src_addr = *(uint32_t *)src_ip;
+		new_conn.src_port = *(uint16_t *) src_port;
+		new_conn.dest_addr = *(uint32_t *) dest_ip;
+		new_conn.dest_port = *(uint16_t *) dest_port;
 		new_conn.seq_num = htonl(this->seq_num++);
 		new_conn.tcp_state = E::SYN_RCVD;
 		//push in to pending connection list
 		this->pending_conn_list.push_back(new_conn);
 
-		printf("--------------------------Here3-----------------------\nsrc_addr: %x\nsrc_port: %d\ndest_addr: %x\ndest_port: %d\nseq_num: %d\n",new_conn.src_addr,new_conn.src_port,new_conn.dest_addr,new_conn.dest_port,*(int *)seq_num);
+		printf("--------------------------------SEQ_NUM-----------------------\nnum: %u\n", ntohl(new_conn.seq_num));
 
 		tmp_num = ntohl(*(int *)seq_num) + 1;
 		tmp_num = htonl(tmp_num);
@@ -343,38 +405,50 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 		SYN_pkt->writeData(14+IHL[0]*4, dest_port, 2);
 		SYN_pkt->writeData(14+IHL[0]*4+2, src_port, 2);
 		SYN_pkt->writeData(14+IHL[0]*4+4, &(new_conn.seq_num),4);
-		tmp[0] = 0x2;
+		SYN_pkt->writeData(14+IHL[0]*4+8, &tmp_num,4);
+		SYN_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
+		tmp[0] = 0x12;
 		SYN_pkt->writeData(14+IHL[0]*4+13, tmp,1);
-		this->sendPacket("IPv4", SYN_pkt);
+		SYN_pkt->readData(14+IHL[0]*4,tcp_hd,20);
+		checksum = this->tcp_check_sum(*(uint32_t *)src_ip,*(uint32_t *)dest_ip, tcp_hd, 20);
+		//printf("--------------------------------FUCK-----------------------\nchecksum = %x\n", checksum);
+		checksum = htons(checksum);
+		SYN_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
 
+		this->sendPacket("IPv4", SYN_pkt);
+		/*
 		Packet* ACK_pkt = this->clonePacket(SYN_pkt);
 		ACK_pkt->writeData(14+IHL[0]*4+8, &tmp_num,4);
 		tmp[0] = 0x10;
 		ACK_pkt->writeData(14+IHL[0]*4+13, tmp,1);
 		this->sendPacket("IPv4", ACK_pkt);
+		 */
 
-		printf("------------------Here----------------\nrecieved seqnum: %d SYN: %d\n", ntohl(tmp_num), this->seq_num-1);
+		//printf("------------------Here----------------\nrecieved seqnum: %u SYN: %u\n", ntohl(tmp_num), this->seq_num-1);
 	}
 	else if(!SYN && ACK)//ACK
 	{
-		printf("------------------Here----------------\nACK: %d\n", (int)ack_num[0]);
+		printf("------------------Here----------------\n--------------------------------------\n-------------------------\nACK: %d\n", (int)ack_num[0]);
 		std::list<struct tcp_context>::iterator iter;
 		struct tcp_context estb_conn;
 		//find following connection
-		iter = this->find_conn(int(ntohl((uint32_t) ack_num[0]))-1);
+		iter = this->find_conn(int(ntohl(*(uint32_t *)ack_num))-1);
+		printf("-------------------------------------ACK_NUM------------------------\nack_num: %u", ntohl(*(uint32_t *)ack_num));
 		if(iter == this->pending_conn_list.end())
 		{
+			printf("-------------------ERRORRRRRRR--------------\n");
 			this->freePacket(packet);
 			return;
 		}
+		printf("-------------------SUCCESSSSSSSSSSSSSSs--------------\n");
 		estb_conn = *iter;
 		//move the connection from pending list to estb list
 		this->pending_conn_list.erase(iter);
 		estb_conn.tcp_state = E::ESTABLISHED;
 		this->estb_conn_list.push_back(estb_conn);
-		if(this->accept_flag)
+		if(this->accept_cnt != 0)
 		{
-			this->accept_flag = false;
+			this->accept_cnt--;
 			//pop the established connection and make a new file descriptor
 			struct tcp_context finished_conn;
 			int socket_fd;
@@ -384,15 +458,26 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			finished_conn.socket_fd = socket_fd;
 			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_family = AF_INET;
 			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_addr.s_addr = ntohl(finished_conn.src_addr);
-			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_port = ntohs(finished_conn.src_port);;
+			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_port = finished_conn.src_port;
 			this->tcp_list.push_back(finished_conn);
 			this->freePacket(packet);
-			this->returnSystemCall(this->ap_cont.syscallUUID,0);
+			printf("--------------------RETURN2----------------\n");
+			this->returnSystemCall(this->ap_cont.syscallUUID,socket_fd);
 		}
 	}
 	else if(SYN && ACK)//SYNACK
 	{
 		printf("--------------------------Here2-----------------------\n");
+		Packet* myPacket = this->clonePacket(packet); //prepare to send
+		//swap src and dest
+		myPacket->writeData(14+12, dest_ip, 4);
+		myPacket->writeData(14+16, src_ip, 4);
+		myPacket->writeData(14+IHL[0]*4, dest_port, 2);
+		myPacket->writeData(14+IHL[0]*4+2, src_port, 2);
+
+		//IP module will fill rest of IP header,
+		//send it to correct network interface
+		this->sendPacket("IPv4", myPacket);
 	}
 	//given packet is my responsibility
 	this->freePacket(packet);
