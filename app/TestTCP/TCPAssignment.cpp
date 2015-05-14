@@ -81,9 +81,9 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 				static_cast<socklen_t*>(param.param3_ptr));
 		break;
 	case GETPEERNAME:
-		//this->syscall_getpeername(syscallUUID, pid, param.param1_int,
-		//		static_cast<struct sockaddr *>(param.param2_ptr),
-		//		static_cast<socklen_t*>(param.param3_ptr));
+		this->syscall_getpeername(syscallUUID, pid, param.param1_int,
+				static_cast<struct sockaddr *>(param.param2_ptr),
+				static_cast<socklen_t*>(param.param3_ptr));
 		break;
 	default:
 		assert(0);
@@ -110,7 +110,7 @@ void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 /* Bind a socket. If overlapped, return 1 else 0. */
 void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int param1_int, struct sockaddr* param2_ptr, socklen_t param3_int)
 {
-	if (this->check_overlap(param1_int, param2_ptr))
+	if (this->check_overlap(param1_int, param2_ptr, pid))
 		this->returnSystemCall(syscallUUID,1);
 	else 
 		this->returnSystemCall(syscallUUID,0);
@@ -118,7 +118,7 @@ void TCPAssignment::syscall_bind(UUID syscallUUID, int pid, int param1_int, stru
 
 /* Check overlapping. It returns true when there is no overlapping, 
    else add to tcp_list and return false. */
-bool TCPAssignment::check_overlap(int fd, sockaddr* addr)
+bool TCPAssignment::check_overlap(int fd, sockaddr* addr, int pid)
 {
 	int check_fd;
 	uint32_t check_addr;
@@ -133,14 +133,14 @@ bool TCPAssignment::check_overlap(int fd, sockaddr* addr)
 	for(cursor=this->tcp_list.begin(); cursor != this->tcp_list.end(); ++cursor)
 	{
 		/* Already socket_fd exists in tcp_list */
-		if((*cursor).socket_fd == check_fd)
+		if(((*cursor).pid == pid) && ((*cursor).socket_fd == check_fd))
 			return true;
 
 		/* Bind rule */
 		if(( ((*cursor).src_addr == check_addr) || ((*cursor).src_addr == INADDR_ANY) || check_addr == INADDR_ANY )  && ((*cursor).src_port == check_port))
 			return true;	
 	}
-	this->add_tcplist(check_fd, check_addr, check_port);
+	this->add_tcplist(check_fd, check_addr, check_port, pid);
 	return false;
 }
 
@@ -150,7 +150,7 @@ void TCPAssignment::syscall_getsockname(UUID syscallUUID,int pid,int param1_int,
 	std::list<struct tcp_context>::iterator sock;
 	
 	/* Find socket */
-	sock = this->find_tcplist(param1_int);
+	sock = this->find_tcplist(param1_int, pid);
 	
 	/* The socket_fd (param1_int) does not exist in tcp_list */
 	if (sock == this->tcp_list.end())
@@ -163,12 +163,31 @@ void TCPAssignment::syscall_getsockname(UUID syscallUUID,int pid,int param1_int,
 	this->returnSystemCall(syscallUUID, 0);
 }
 
+/* Get a socket name */
+void TCPAssignment::syscall_getpeername(UUID syscallUUID,int pid,int param1_int, struct sockaddr* param2_ptr, socklen_t* param3_ptr)
+{
+	std::list<struct tcp_context>::iterator sock;
+
+	/* Find socket */
+	sock = this->find_tcplist(param1_int, pid);
+
+	/* The socket_fd (param1_int) does not exist in tcp_list */
+	if (sock == this->tcp_list.end())
+		this->returnSystemCall(syscallUUID, 1);
+
+	((struct sockaddr_in *) param2_ptr)->sin_family = AF_INET;
+	((struct sockaddr_in *) param2_ptr)->sin_addr.s_addr = (*sock).dest_addr;
+	((struct sockaddr_in *) param2_ptr)->sin_port = (*sock).dest_port;;
+
+	this->returnSystemCall(syscallUUID, 0);
+}
+
 /* Listen param1 = sockfd, param2 = backlog */
 void TCPAssignment::syscall_listen(UUID syscallUUID,int pid,int fd,int backlog)
 {
 	printf("-----------------------LISTEN--------------------\nbacklog = %u\n",backlog);
 	std::list<struct tcp_context>::iterator sock;
-	sock = this->find_tcplist(fd);
+	sock = this->find_tcplist(fd, pid);
 	this->backlog = backlog;
 	if(!((*sock).is_bound))
 		this->returnSystemCall(syscallUUID,1);
@@ -204,8 +223,9 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int param1_int,str
 		this->estb_conn_list.pop_front();
 		socket_fd=this->createFileDescriptor(pid);
 		estb_conn.socket_fd = socket_fd;
+		estb_conn.pid = pid;
 		((struct sockaddr_in *) param2_ptr)->sin_family = AF_INET;
-		((struct sockaddr_in *) param2_ptr)->sin_addr.s_addr = ntohl(estb_conn.src_addr);
+		((struct sockaddr_in *) param2_ptr)->sin_addr.s_addr = estb_conn.src_addr;
 		((struct sockaddr_in *) param2_ptr)->sin_port = estb_conn.src_port;
 		this->tcp_list.push_back(estb_conn);
 		printf("--------------------RETURN1----------------\n");
@@ -215,9 +235,10 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int param1_int,str
 
 /* Add new socket block to tcp_list
    Copy socket_fd, addr and port from args to new 'tcp_context sock' */
-void TCPAssignment::add_tcplist(int fd, uint32_t addr, unsigned short int port)
+void TCPAssignment::add_tcplist(int fd, uint32_t addr, unsigned short int port, int pid)
 {
 	tcp_context sock;
+	sock.pid = pid;
 	sock.socket_fd = fd;
 	sock.src_addr = addr;
 	sock.src_port = port;
@@ -242,12 +263,12 @@ void TCPAssignment::remove_tcplist(int fd)
 }
 
 /* Find a socket. If it does not exist in list, return list.end(). */
-std::list<struct tcp_context>::iterator  TCPAssignment::find_tcplist(int fd)
+std::list<struct tcp_context>::iterator  TCPAssignment::find_tcplist(int fd, int pid)
 {
 	std::list<struct tcp_context>::iterator cursor;
 	
 	for(cursor=this->tcp_list.begin(); cursor != this->tcp_list.end(); ++cursor){
-		if((*cursor).socket_fd == fd)
+		if(((*cursor).socket_fd == fd) && ((*cursor).pid == pid))
 			return cursor;
 	}
 	return this->tcp_list.end();
@@ -385,10 +406,11 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 		//printf("-------3---------\n");
 		//build new connection
 		struct tcp_context new_conn;
-		new_conn.src_addr = *(uint32_t *)src_ip;
-		new_conn.src_port = *(uint16_t *) src_port;
-		new_conn.dest_addr = *(uint32_t *) dest_ip;
-		new_conn.dest_port = *(uint16_t *) dest_port;
+		new_conn.pid =
+		new_conn.dest_addr = *(uint32_t *)src_ip;
+		new_conn.dest_port = *(uint16_t *) src_port;
+		new_conn.src_addr = *(uint32_t *) dest_ip;
+		new_conn.src_port = *(uint16_t *) dest_port;
 		new_conn.seq_num = htonl(this->seq_num++);
 		new_conn.tcp_state = E::SYN_RCVD;
 		//push in to pending connection list
@@ -456,11 +478,11 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			this->estb_conn_list.pop_front();
 			socket_fd = this->createFileDescriptor(this->ap_cont.server_sock_fd);
 			finished_conn.socket_fd = socket_fd;
+			finished_conn.pid = this->ap_cont.pid;
 			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_family = AF_INET;
-			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_addr.s_addr = ntohl(finished_conn.src_addr);
+			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_addr.s_addr = finished_conn.src_addr;
 			((struct sockaddr_in *) this->ap_cont.client_addr)->sin_port = finished_conn.src_port;
 			this->tcp_list.push_back(finished_conn);
-			this->freePacket(packet);
 			printf("--------------------RETURN2----------------\n");
 			this->returnSystemCall(this->ap_cont.syscallUUID,socket_fd);
 		}

@@ -38,6 +38,7 @@ namespace E
 
 	/* TCP CONTEXT */
 	struct tcp_context {
+		int pid;
 		int socket_fd;
 		uint32_t src_addr;
 		unsigned short int src_port;
@@ -86,13 +87,14 @@ private:
 	void syscall_socket(UUID syscallUUID, int pid, int param1_int, int param2_int);
 	void syscall_close(UUID syscallUUID, int pid, int param1_int);
 	void syscall_bind(UUID syscallUUID, int pid, int param1_int, struct sockaddr* param2_ptr, socklen_t param3_int);
-	bool check_overlap(int fd, sockaddr* addr);
+	bool check_overlap(int fd, sockaddr* addr, int pid);
 	void syscall_getsockname(UUID syscallUUID,int pid,int param1_int, struct sockaddr* param2_ptr, socklen_t* param3_ptr);
+	void syscall_getpeername(UUID syscallUUID,int pid,int param1_int, struct sockaddr* param2_ptr, socklen_t* param3_ptr);
 	void syscall_listen(UUID syscallUUID, int pid, int fd, int backlog);
 	void syscall_accept(UUID syscallUUID, int pid, int param1_int,struct sockaddr* param2_ptr, socklen_t* param3_ptr);
-	void add_tcplist(int fd, uint32_t addr, unsigned short int port);
+	void add_tcplist(int fd, uint32_t addr, unsigned short int port, int pid);
 	void remove_tcplist(int fd);
-	std::list< struct tcp_context >::iterator find_tcplist(int fd);
+	std::list< struct tcp_context >::iterator find_tcplist(int fd, int pid);
 	int find_listen();
 	std::list< struct tcp_context >::iterator find_conn(int seq_num);
 	uint16_t one_sum(const uint8_t* buffer, size_t size);
