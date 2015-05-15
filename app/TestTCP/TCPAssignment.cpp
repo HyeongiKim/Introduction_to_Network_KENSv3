@@ -134,13 +134,18 @@ bool TCPAssignment::check_overlap(int fd, sockaddr* addr, int pid)
 	{
 		/* Already socket_fd exists in tcp_list */
 		if(((*cursor).pid == pid) && ((*cursor).socket_fd == check_fd))
+		{
+			fprintf(stderr,"CASE: OVERLAP PID: %u, SOCK_FD: %u\n",pid,check_fd);
 			return true;
-
+		}
 		/* Bind rule */
 		if(( ((*cursor).src_addr == check_addr) || ((*cursor).src_addr == INADDR_ANY) || check_addr == INADDR_ANY )  && ((*cursor).src_port == check_port))
-			return true;	
+		{	
+			fprintf(stderr,"CASE: OVERLAP BIND rule\n");
+			return true;
+		}
 	}
-	fprintf(stderr,"CASE: CHECK_OVERLAP, check_addr: %x, check_port: %x\n",check_addr,check_port);
+	fprintf(stderr,"CASE: OVERLAP PASS, check_addr: %u, check_port: %u\n",check_addr,check_port);
 	this->add_tcplist(check_fd, check_addr, check_port, pid);
 	return false;
 }
@@ -274,13 +279,13 @@ std::list<struct tcp_context>::iterator  TCPAssignment::find_tcplist(int fd)
 }
 
 /* Find a socket. If it does not exist in list, return list.end(). */
-std::list<struct tcp_context>::iterator TCPAssignment::find_listen(uint16_t port)
+std::list<struct tcp_context>::iterator TCPAssignment::find_listen(uint32_t addr, uint16_t port)
 {
 	std::list< struct tcp_context >::iterator cursor;
 
 	for(cursor=this->tcp_list.begin(); cursor != this->tcp_list.end(); ++cursor){
-		fprintf(stderr,"CASE: find_listen Call cursor addr: %x, curosr port: %x\n",(*cursor).src_port);
-		if(((*cursor).tcp_state == E::LISTEN) && ((*cursor).src_port == port) )
+		fprintf(stderr,"CASE: find_listen Call, curosr port: %x\n",(*cursor).src_port);
+		if(((*cursor).tcp_state == E::LISTEN) && (((*cursor).src_addr == addr)||((*cursor).src_addr == 0)) && ((*cursor).src_port == port) )
 		{
 			return cursor;
 		}
@@ -393,7 +398,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
 	fprintf(stderr,"CASE: PacketArrived CALL, dest_ip: %x, dest_port: %x\n",*(uint32_t *)dest_ip,*(uint16_t *)dest_port);
 	//check if the listen is called.
-	listen_socket = find_listen(*(uint16_t *)dest_port);
+	listen_socket = find_listen(*(uint32_t *)dest_ip,*(uint16_t *)dest_port);
 	if(listen_socket == tcp_list.end())
 	{
 		this->freePacket(packet);

@@ -82,7 +82,7 @@ private:
 	void add_tcplist(int fd, uint32_t addr, unsigned short int port, int pid);
 	void remove_tcplist(int fd);
 	std::list< struct tcp_context >::iterator find_tcplist(int fd);
-	std::list<struct tcp_context>::iterator find_listen(uint16_t port);
+	std::list<struct tcp_context>::iterator find_listen(uint32_t addr,uint16_t port);
 	std::list< struct tcp_context >::iterator find_conn(int seq_num, std::list< struct tcp_context > *pend_conn_list_ptr);
 	uint16_t one_sum(const uint8_t* buffer, size_t size);
 	uint16_t tcp_check_sum(uint32_t source, uint32_t dest, const uint8_t* tcp_seg, size_t length);
