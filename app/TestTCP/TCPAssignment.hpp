@@ -12,6 +12,7 @@
 
 #include <E/Networking/E_Networking.hpp>
 #include <E/Networking/E_Host.hpp>
+#include <E/Networking/E_RoutingInfo.hpp>
 #include <arpa/inet.h>
 #include <netinet/tcp.h>
 #include <netinet/ip.h>
@@ -33,6 +34,7 @@ namespace E
 		FIN_WAIT2,
 		CLOSING,
 		TIME_WAIT,
+		CLOSE_WAIT,
 		LAST_ACK 
 	};
 
@@ -55,6 +57,7 @@ namespace E
 		bool is_bound = false;;
 		TCP_STATE tcp_state = CLOSED;
 		int seq_num;
+		int fin_num;
 		struct accept_param_container ap_cont;
 		std::list< struct tcp_context > pending_conn_list;
 		std::list< struct tcp_context > estb_conn_list;
@@ -68,6 +71,7 @@ private:
 	/* list of socket_blocks */
 	std::list< struct tcp_context > tcp_list;
 	int seq_num = 0;
+	int port = 2000;
 private:
 	virtual void timerCallback(void* payload) final;
 	/* Assignment */
@@ -77,12 +81,15 @@ private:
 	bool check_overlap(int fd, sockaddr* addr, int pid);
 	void syscall_getsockname(UUID syscallUUID,int pid,int param1_int, struct sockaddr* param2_ptr, socklen_t* param3_ptr);
 	void syscall_getpeername(UUID syscallUUID,int pid,int param1_int, struct sockaddr* param2_ptr, socklen_t* param3_ptr);
+	void syscall_connect(UUID syscallUUID, int pid, int client_socket, struct sockaddr* connecting_addr, socklen_t len);
 	void syscall_listen(UUID syscallUUID, int pid, int fd, int backlog);
 	void syscall_accept(UUID syscallUUID, int pid, int param1_int,struct sockaddr* param2_ptr, socklen_t* param3_ptr);
 	void add_tcplist(int fd, uint32_t addr, unsigned short int port, int pid);
-	void remove_tcplist(int fd);
-	std::list< struct tcp_context >::iterator find_tcplist(int fd);
-	std::list<struct tcp_context>::iterator find_listen(uint32_t addr,uint16_t port);
+	void remove_tcplist(int fd,int pid);
+	std::list< struct tcp_context >::iterator find_tcplist(int fd, int pid);
+	std::list<struct tcp_context>::iterator find_listen(uint32_t addr, uint16_t port);
+	std::list<struct tcp_context>::iterator find_client(uint32_t addr, uint16_t port);
+	std::list<struct tcp_context>::iterator get_tcp_state(uint32_t addr, uint16_t port);
 	std::list< struct tcp_context >::iterator find_conn(int seq_num, std::list< struct tcp_context > *pend_conn_list_ptr);
 	uint16_t one_sum(const uint8_t* buffer, size_t size);
 	uint16_t tcp_check_sum(uint32_t source, uint32_t dest, const uint8_t* tcp_seg, size_t length);

@@ -10,6 +10,7 @@
 #include <E/E_Common.hpp>
 #include <E/Networking/E_Host.hpp>
 #include <E/Networking/E_Networking.hpp>
+#include <E/Networking/E_RoutingInfo.hpp>
 #include <cerrno>
 #include <E/Networking/E_Packet.hpp>
 #include <E/Networking/E_NetworkUtil.hpp>
@@ -59,8 +60,8 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 		//this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
 		break;
 	case CONNECT:
-		//this->syscall_connect(syscallUUID, pid, param.param1_int,
-		//		static_cast<struct sockaddr*>(param.param2_ptr), (socklen_t)param.param3_int);
+		this->syscall_connect(syscallUUID, pid, param.param1_int,
+				static_cast<struct sockaddr*>(param.param2_ptr), (socklen_t)param.param3_int);
 		break;
 	case LISTEN:
 		this->syscall_listen(syscallUUID, pid, param.param1_int, param.param2_int);
@@ -102,7 +103,64 @@ void TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int param1_int, in
 /* Close a socket. */
 void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 {
-	this->remove_tcplist(param1_int);
+	std::list< struct tcp_context >::iterator iter = find_tcplist(param1_int,pid);
+	if(iter == tcp_list.end())
+		this->returnSystemCall(syscallUUID,1);
+	if(iter->tcp_state == E::ESTABLISHED)
+	{
+		uint8_t tmp;
+		uint16_t checksum=0;
+		uint8_t tcp_hd[20];
+		int seq_num;
+		Packet* FIN_pkt = this->allocatePacket(54);
+		FIN_pkt->writeData(14+12, &(iter->src_addr), 4);
+		FIN_pkt->writeData(14+16, &(iter->dest_addr), 4);
+		FIN_pkt->writeData(14+20, &(iter->src_port), 2);
+		FIN_pkt->writeData(14+20+2, &(iter->dest_port), 2);
+		seq_num = htonl(this->seq_num);
+		FIN_pkt->writeData(14+20+4, &seq_num,4);
+		tmp = 0x50;
+		FIN_pkt->writeData(14+20+12, &tmp, 1);
+		tmp = 0x1;
+		FIN_pkt->writeData(14+20+13, &tmp, 1);
+		FIN_pkt->readData(14+20,tcp_hd,20);
+		checksum = this->tcp_check_sum(iter->src_addr,iter->dest_addr, tcp_hd, 20);
+		checksum = htons(checksum);
+		FIN_pkt->writeData(14+20+16, &checksum, 2);
+		this->sendPacket("IPv4",FIN_pkt);
+		iter->seq_num = this->seq_num++;
+		iter->tcp_state = E::FIN_WAIT1;
+		iter->ap_cont.syscallUUID = syscallUUID;
+		return;
+	}
+	else if(iter->tcp_state == E::CLOSE_WAIT)
+	{
+		uint8_t tmp;
+		uint16_t checksum=0;
+		uint8_t tcp_hd[20];
+		int seq_num;
+		Packet* FIN_pkt = this->allocatePacket(54);
+		FIN_pkt->writeData(14+12, &(iter->src_addr), 4);
+		FIN_pkt->writeData(14+16, &(iter->dest_addr), 4);
+		FIN_pkt->writeData(14+20, &(iter->src_port), 2);
+		FIN_pkt->writeData(14+20+2, &(iter->dest_port), 2);
+		seq_num = htonl(this->seq_num);
+		FIN_pkt->writeData(14+20+4, &seq_num,4);
+		tmp = 0x50;
+		FIN_pkt->writeData(14+20+12, &tmp, 1);
+		tmp = 0x1;
+		FIN_pkt->writeData(14+20+13, &tmp, 1);
+		FIN_pkt->readData(14+20,tcp_hd,20);
+		checksum = this->tcp_check_sum(iter->src_addr,iter->dest_addr, tcp_hd, 20);
+		checksum = htons(checksum);
+		FIN_pkt->writeData(14+20+16, &checksum, 2);
+		this->sendPacket("IPv4",FIN_pkt);
+		iter->seq_num = this->seq_num++;
+		iter->tcp_state = E::LAST_ACK;
+		iter->ap_cont.syscallUUID = syscallUUID;
+		return;
+	}
+	this->remove_tcplist(param1_int,pid);
 	this->removeFileDescriptor(pid,param1_int);
 	this->returnSystemCall(syscallUUID,0);
 }
@@ -134,18 +192,12 @@ bool TCPAssignment::check_overlap(int fd, sockaddr* addr, int pid)
 	{
 		/* Already socket_fd exists in tcp_list */
 		if(((*cursor).pid == pid) && ((*cursor).socket_fd == check_fd))
-		{
-			fprintf(stderr,"CASE: OVERLAP PID: %u, SOCK_FD: %u\n",pid,check_fd);
 			return true;
-		}
+
 		/* Bind rule */
 		if(( ((*cursor).src_addr == check_addr) || ((*cursor).src_addr == INADDR_ANY) || check_addr == INADDR_ANY )  && ((*cursor).src_port == check_port))
-		{	
-			fprintf(stderr,"CASE: OVERLAP BIND rule\n");
-			return true;
-		}
+			return true;	
 	}
-	fprintf(stderr,"CASE: OVERLAP PASS, check_addr: %u, check_port: %u\n",check_addr,check_port);
 	this->add_tcplist(check_fd, check_addr, check_port, pid);
 	return false;
 }
@@ -156,12 +208,11 @@ void TCPAssignment::syscall_getsockname(UUID syscallUUID,int pid,int param1_int,
 	std::list<struct tcp_context>::iterator sock;
 	
 	/* Find socket */
-	sock = this->find_tcplist(param1_int);
+	sock = this->find_tcplist(param1_int, pid);
 	
 	/* The socket_fd (param1_int) does not exist in tcp_list */
 	if (sock == this->tcp_list.end())
 		this->returnSystemCall(syscallUUID, 1);
-	
 	((struct sockaddr_in *) param2_ptr)->sin_family = AF_INET;
 	((struct sockaddr_in *) param2_ptr)->sin_addr.s_addr = (*sock).src_addr;
 	((struct sockaddr_in *) param2_ptr)->sin_port = (*sock).src_port;;
@@ -169,15 +220,16 @@ void TCPAssignment::syscall_getsockname(UUID syscallUUID,int pid,int param1_int,
 	this->returnSystemCall(syscallUUID, 0);
 }
 
-/* Get a socket name */
+
+// Get a socket name
 void TCPAssignment::syscall_getpeername(UUID syscallUUID,int pid,int param1_int, struct sockaddr* param2_ptr, socklen_t* param3_ptr)
 {
 	std::list<struct tcp_context>::iterator sock;
 
-	/* Find socket */
-	sock = this->find_tcplist(param1_int);
+	// Find socket
+	sock = this->find_tcplist(param1_int, pid);
 
-	/* The socket_fd (param1_int) does not exist in tcp_list */
+	// The socket_fd (param1_int) does not exist in tcp_list
 	if (sock == this->tcp_list.end())
 		this->returnSystemCall(syscallUUID, 1);
 
@@ -188,12 +240,62 @@ void TCPAssignment::syscall_getpeername(UUID syscallUUID,int pid,int param1_int,
 	this->returnSystemCall(syscallUUID, 0);
 }
 
+void TCPAssignment::syscall_connect(UUID syscallUUID, int pid, int client_socket, struct sockaddr* connecting_addr, socklen_t len)
+{
+	//fprintf(stderr,"syscall_connect:start\n");
+	uint32_t src_addr = 0xb000000;
+	struct sockaddr_in addr;
+	int seq_num;
+	uint8_t tmp;
+	uint16_t checksum=0;
+	uint8_t tcp_hd[20];
+	struct sockaddr_in* dest_addr = (sockaddr_in *)connecting_addr;
+	std::list< struct tcp_context >::iterator iter = this->find_tcplist(client_socket, pid);
+	if(iter == this->tcp_list.end())
+	{
+		addr.sin_family = AF_INET;
+		addr.sin_addr.s_addr = src_addr++;
+		addr.sin_port = htons(this->port++);
+		//fprintf(stderr,"syscall_connect:No socket exist\n");
+		while(this->check_overlap(client_socket, (struct sockaddr *)&addr,pid))
+		{
+			//fprintf(stderr,"syscall_connect:error:overlapfailed\n");
+			return;
+		}
+		iter = this->find_tcplist(client_socket, pid);
+	}
+	Packet* conn_SYN_pkt = this->allocatePacket(54);
+
+
+	conn_SYN_pkt->writeData(14+12, &(iter->src_addr), 4);
+	conn_SYN_pkt->writeData(14+16, &(dest_addr->sin_addr.s_addr), 4);
+	conn_SYN_pkt->writeData(14+20, &(iter->src_port), 2);
+	conn_SYN_pkt->writeData(14+20+2, &(dest_addr->sin_port), 2);
+	seq_num = htonl(this->seq_num);
+	conn_SYN_pkt->writeData(14+20+4, &seq_num,4);
+	tmp = 0x50;
+	conn_SYN_pkt->writeData(14+20+12, &tmp, 1);
+	tmp = 0x2;
+	conn_SYN_pkt->writeData(14+20+13, &tmp, 1);
+	conn_SYN_pkt->readData(14+20,tcp_hd,20);
+	checksum = this->tcp_check_sum(iter->src_addr,dest_addr->sin_addr.s_addr, tcp_hd, 20);
+	checksum = htons(checksum);
+	conn_SYN_pkt->writeData(14+20+16, &checksum, 2);
+	this->sendPacket("IPv4",conn_SYN_pkt);
+	iter->dest_addr = dest_addr->sin_addr.s_addr;
+	iter->dest_port = dest_addr->sin_port;
+	iter->tcp_state = E::SYN_SENT;
+	iter->seq_num = this->seq_num++;
+	iter->ap_cont.syscallUUID = syscallUUID;
+	iter->ap_cont.client_addr = connecting_addr;
+}
+
 /* Listen param1 = sockfd, param2 = backlog */
 void TCPAssignment::syscall_listen(UUID syscallUUID,int pid,int fd,int backlog)
 {
-	fprintf(stderr,"-----------------------LISTEN--------------------\nsock_fd = %u, backlog = %u, pid = %u \n",fd,backlog,pid);
+	//fprintf(stderr,"syscall_listen\n");
 	std::list<struct tcp_context>::iterator sock;
-	sock = this->find_tcplist(fd);
+	sock = this->find_tcplist(fd, pid);
 	if(!((*sock).is_bound))
 		this->returnSystemCall(syscallUUID,1);
 	(*sock).tcp_state = E::LISTEN;
@@ -203,13 +305,14 @@ void TCPAssignment::syscall_listen(UUID syscallUUID,int pid,int fd,int backlog)
 
 void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int param1_int,struct sockaddr* param2_ptr, socklen_t* param3_ptr)
 {
-
-	std::list< struct tcp_context >::iterator iter = find_tcplist(param1_int);
+	//fprintf(stderr,"syscall_accept:start>>pid: %d fd: %d\n", pid, param1_int);
+	std::list< struct tcp_context >::iterator iter = find_tcplist(param1_int, pid);
 	if(iter == this->tcp_list.end())
 		this->returnSystemCall(syscallUUID, 1);
 	//block the accept call if estb list is empty
 	if((*iter).estb_conn_list.empty())
 	{
+		//fprintf(stderr,"syscall_accept:blocked>>pid: %d fd: %d\n", pid, param1_int);
 		//save the accept param
 		(*iter).ap_cont.syscallUUID = syscallUUID;
 		(*iter).pid = pid;
@@ -221,6 +324,7 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int param1_int,str
 	}
 	else
 	{
+		//fprintf(stderr,"syscall_accept:continue>>pid: %d fd: %d\n", pid, param1_int);
 		//pop the established connection and make a new file descriptor
 		struct tcp_context estb_conn;
 		int socket_fd;
@@ -252,14 +356,14 @@ void TCPAssignment::add_tcplist(int fd, uint32_t addr, unsigned short int port, 
 }
 
 /* Remove socket from tcp_list */
-void TCPAssignment::remove_tcplist(int fd)
+void TCPAssignment::remove_tcplist(int fd, int pid)
 {
 	std::list<struct tcp_context>::iterator cursor;
 	
 	cursor=this->tcp_list.begin();
 	
 	while(cursor != this->tcp_list.end()){
-		if ((*cursor).socket_fd == fd)
+		if ((*cursor).socket_fd == fd && (*cursor).pid ==pid)
 			cursor=this->tcp_list.erase(cursor);
 		else
 			++cursor;
@@ -267,12 +371,14 @@ void TCPAssignment::remove_tcplist(int fd)
 }
 
 /* Find a socket. If it does not exist in list, return list.end(). */
-std::list<struct tcp_context>::iterator  TCPAssignment::find_tcplist(int fd)
+std::list<struct tcp_context>::iterator  TCPAssignment::find_tcplist(int fd, int pid)
 {
+	//fprintf(stderr,"find_tcplist:\nfinding fd: %d pid: %d\n",fd,pid);
 	std::list<struct tcp_context>::iterator cursor;
 	
 	for(cursor=this->tcp_list.begin(); cursor != this->tcp_list.end(); ++cursor){
-		if((*cursor).socket_fd == fd)
+		//fprintf(stderr,"current_tcplist:\nfinding fd: %d pid: %d\n",cursor->socket_fd,cursor->pid);
+		if((*cursor).socket_fd == fd && (*cursor).pid == pid)
 			return cursor;
 	}
 	return this->tcp_list.end();
@@ -284,13 +390,33 @@ std::list<struct tcp_context>::iterator TCPAssignment::find_listen(uint32_t addr
 	std::list< struct tcp_context >::iterator cursor;
 
 	for(cursor=this->tcp_list.begin(); cursor != this->tcp_list.end(); ++cursor){
-		fprintf(stderr,"CASE: find_listen Call, curosr port: %x\n",(*cursor).src_port);
-		if(((*cursor).tcp_state == E::LISTEN) && (((*cursor).src_addr == addr)||((*cursor).src_addr == 0)) && ((*cursor).src_port == port) )
-		{
+		if(((*cursor).tcp_state == E::LISTEN) && ( (*cursor).src_addr == addr || (*cursor).src_addr == 0) && ((*cursor).src_port == port) )
 			return cursor;
-		}
 	}
-	fprintf(stderr,"CASE: find_listen CALL FAIL\n");
+	return this->tcp_list.end();
+}
+
+/* Find a socket. If it does not exist in list, return list.end(). */
+std::list<struct tcp_context>::iterator TCPAssignment::find_client(uint32_t addr, uint16_t port)
+{
+	std::list< struct tcp_context >::iterator cursor;
+	//fprintf(stderr,"find_client:addr: %x, port: %u\n",addr,port);
+	for(cursor=this->tcp_list.begin(); cursor != this->tcp_list.end(); ++cursor){
+		if(((*cursor).tcp_state == E::SYN_SENT) && ( (*cursor).src_addr == addr || (*cursor).src_addr == 0) && ((*cursor).src_port == port) )
+			return cursor;
+	}
+	return this->tcp_list.end();
+}
+
+/* Find a socket. If it does not exist in list, return list.end(). */
+std::list<struct tcp_context>::iterator TCPAssignment::get_tcp_state(uint32_t addr, uint16_t port)
+{
+	std::list< struct tcp_context >::iterator cursor;
+	//fprintf(stderr,"find_client:addr: %x, port: %u\n",addr,port);
+	for(cursor=this->tcp_list.begin(); cursor != this->tcp_list.end(); ++cursor){
+		if(((*cursor).src_addr == addr || (*cursor).src_addr == 0) && ((*cursor).src_port == port) )
+			return cursor;
+	}
 	return this->tcp_list.end();
 }
 
@@ -299,7 +425,7 @@ std::list< struct tcp_context >::iterator TCPAssignment::find_conn(int seq_num, 
 {
 	std::list< struct tcp_context >::iterator cursor;
 	for(cursor=(*pend_conn_list_ptr).begin(); cursor != (*pend_conn_list_ptr).end(); ++cursor){
-		if(ntohl((*cursor).seq_num) == seq_num)
+		if((*cursor).seq_num == seq_num)
 			return cursor;
 	}
 	return (*pend_conn_list_ptr).end();
@@ -366,6 +492,7 @@ uint16_t TCPAssignment::tcp_check_sum(uint32_t source, uint32_t dest, const uint
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 {
+	//fprintf(stderr,"------------packetArrived-------------\n");
 	//Simple L3 forwarding
 	//extract address
 	uint8_t src_ip[4];
@@ -377,9 +504,12 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 	uint8_t ack_num[4];
 	uint16_t checksum=0;
 	uint8_t tcp_hd[20];
-	bool SYN, ACK;
+	bool SYN, ACK, FIN;
 	int tmp_num;
+	int socket_case = E::LISTEN;
 	std::list<struct tcp_context>::iterator listen_socket;
+	std::list<struct tcp_context>::iterator conn_socket;
+	std::list<struct tcp_context>::iterator closing_socket;
 	std::list< struct tcp_context > *pending_conn_list_ptr;
 	std::list< struct tcp_context > *estb_conn_list_ptr;
 	//struct sockaddr *host_addr = (struct sockaddr *) malloc(sizeof(sockaddr));
@@ -393,115 +523,252 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 	packet->readData(14+IHL[0]*4+4,seq_num,4);
 	packet->readData(14+IHL[0]*4+8,ack_num,4);
 	packet->readData(14+IHL[0]*4+13, tmp, 1);
+	FIN = bool(tmp[0] & 0x1);
 	SYN = bool(tmp[0] & 0x2);
 	ACK = bool(tmp[0] & 0x10);
 
-	fprintf(stderr,"CASE: PacketArrived CALL, dest_ip: %x, dest_port: %x\n",*(uint32_t *)dest_ip,*(uint16_t *)dest_port);
 	//check if the listen is called.
-	listen_socket = find_listen(*(uint32_t *)dest_ip,*(uint16_t *)dest_port);
+	listen_socket = find_listen(*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
 	if(listen_socket == tcp_list.end())
 	{
-		this->freePacket(packet);
-		fprintf(stderr,"CASE: LISTEN NOT CALLED\n");
-		return;
+		conn_socket = find_client(*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
+		if(conn_socket == tcp_list.end())
+		{
+			closing_socket = get_tcp_state(*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
+			if(closing_socket == tcp_list.end())
+				socket_case = E::CLOSED;
+			else
+				socket_case = closing_socket->tcp_state;
+		}
+		else
+			socket_case = E::SYN_SENT;
 	}
 
-	//allocate listen_socket's pending list
-	pending_conn_list_ptr = &((*listen_socket).pending_conn_list);
-	estb_conn_list_ptr = &((*listen_socket).estb_conn_list);
 
-	if(SYN && !ACK)//SYN
+	switch(socket_case)
 	{
-		//check pending list size doesn't exceed backlog value
-		if(pending_conn_list_ptr->size() >= (*listen_socket).backlog)
+	case E::LISTEN:
+	{
+		//allocate listen_socket's pending list
+		pending_conn_list_ptr = &((*listen_socket).pending_conn_list);
+		estb_conn_list_ptr = &((*listen_socket).estb_conn_list);
+
+		if(SYN)//SYN
 		{
-			this->freePacket(packet);
-			fprintf(stderr,"CASE: SYN, EXCEED Backlog value\n");
-			return;
+			//fprintf(stderr,"----------------SERVER SYN handler-----------\n%x %d\n",*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
+			//check pending list size doesn't exceed backlog value
+			if(pending_conn_list_ptr->size() >= (*listen_socket).backlog)
+			{
+				this->freePacket(packet);
+				return;
+			}
+
+			//build new connection
+			struct tcp_context new_conn;
+			int seq_tmp;
+			new_conn.dest_addr = *(uint32_t *)src_ip;
+			new_conn.dest_port = *(uint16_t *) src_port;
+			new_conn.src_addr = *(uint32_t *) dest_ip;
+			new_conn.src_port = *(uint16_t *) dest_port;
+			seq_tmp = htonl(this->seq_num);
+			new_conn.seq_num = this->seq_num++;
+			new_conn.tcp_state = E::SYN_RCVD;
+			//push in to pending connection list
+			(*pending_conn_list_ptr).push_back(new_conn);
+
+
+			tmp_num = ntohl(*(int *)seq_num) + 1;
+			tmp_num = htonl(tmp_num);
+			//Send ACK message
+			Packet* SYN_pkt = this->clonePacket(packet);
+			SYN_pkt->writeData(14+12, dest_ip, 4);
+			SYN_pkt->writeData(14+16, src_ip, 4);
+			SYN_pkt->writeData(14+IHL[0]*4, dest_port, 2);
+			SYN_pkt->writeData(14+IHL[0]*4+2, src_port, 2);
+			SYN_pkt->writeData(14+IHL[0]*4+4, &seq_tmp,4);
+			SYN_pkt->writeData(14+IHL[0]*4+8, &tmp_num,4);
+			SYN_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
+			tmp[0] = 0x12;
+			SYN_pkt->writeData(14+IHL[0]*4+13, tmp,1);
+			SYN_pkt->readData(14+IHL[0]*4,tcp_hd,20);
+			checksum = this->tcp_check_sum(*(uint32_t *)src_ip,*(uint32_t *)dest_ip, tcp_hd, 20);
+			checksum = htons(checksum);
+			SYN_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
+
+			this->sendPacket("IPv4", SYN_pkt);
 		}
+		if(ACK)//ACK
+		{
+			//fprintf(stderr,"----------------SERVER ACK handler-----------\n%x %d\n",*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
+			//fprintf(stderr,"listen socket:ACK handler>>pid: %d fd: %d\n", listen_socket->pid, listen_socket->socket_fd);
+			std::list<struct tcp_context>::iterator iter;
+			struct tcp_context estb_conn;
+			//find following connection
+			iter = this->find_conn(int(ntohl(*(uint32_t *)ack_num))-1, pending_conn_list_ptr);
+			if(iter == (*pending_conn_list_ptr).end())
+			{
+				this->freePacket(packet);
+				return;
+			}
+			estb_conn = *iter;
+			//move the connection from pending list to estb list
+			(*pending_conn_list_ptr).erase(iter);
+			estb_conn.tcp_state = E::ESTABLISHED;
+			(*estb_conn_list_ptr).push_back(estb_conn);
+			if((*listen_socket).accept_cnt != 0)
+			{
+				//fprintf(stderr,"listen socket:ACK handler:unblock accept>>pid: %d fd: %d\n", listen_socket->pid, listen_socket->socket_fd);
+				(*listen_socket).accept_cnt--;
+				//pop the established connection and make a new file descriptor
+				struct tcp_context finished_conn;
+				int socket_fd;
+				finished_conn = (*estb_conn_list_ptr).front();
+				(*estb_conn_list_ptr).pop_front();
+				socket_fd = this->createFileDescriptor(listen_socket->pid);
+				finished_conn.socket_fd = socket_fd;
+				finished_conn.pid = (*listen_socket).pid;
+				((struct sockaddr_in *) (*listen_socket).ap_cont.client_addr)->sin_family = AF_INET;
+				((struct sockaddr_in *) (*listen_socket).ap_cont.client_addr)->sin_addr.s_addr = finished_conn.src_addr;
+				((struct sockaddr_in *) (*listen_socket).ap_cont.client_addr)->sin_port = finished_conn.src_port;
+				this->tcp_list.push_back(finished_conn);
+				this->returnSystemCall((*listen_socket).ap_cont.syscallUUID,socket_fd);
+			}
+		}
+	}
+		break;
+	case E::SYN_SENT:
+	{
+		//allocate listen_socket's pending list
+		pending_conn_list_ptr = &((*conn_socket).pending_conn_list);
+		estb_conn_list_ptr = &((*conn_socket).estb_conn_list);
 
-		//build new connection
-		struct tcp_context new_conn;
-		new_conn.dest_addr = *(uint32_t *)src_ip;
-		new_conn.dest_port = *(uint16_t *) src_port;
-		new_conn.src_addr = *(uint32_t *) dest_ip;
-		new_conn.src_port = *(uint16_t *) dest_port;
-		new_conn.seq_num = htonl(this->seq_num++);
-		new_conn.tcp_state = E::SYN_RCVD;
-		//push in to pending connection list
-		(*pending_conn_list_ptr).push_back(new_conn);
+		if(SYN)//SYN
+		{
+			//fprintf(stderr,"----------------CLIENT SYN handler-----------\n%x %d\n",*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
 
-
-		tmp_num = ntohl(*(int *)seq_num) + 1;
+			tmp_num = ntohl(*(int *)seq_num) + 1;
+			tmp_num = htonl(tmp_num);
+			//Send ACK message
+			Packet* SYN_pkt = this->clonePacket(packet);
+			SYN_pkt->writeData(14+12, dest_ip, 4);
+			SYN_pkt->writeData(14+16, src_ip, 4);
+			SYN_pkt->writeData(14+IHL[0]*4, dest_port, 2);
+			SYN_pkt->writeData(14+IHL[0]*4+2, src_port, 2);
+			SYN_pkt->writeData(14+IHL[0]*4+8, &tmp_num,4);
+			SYN_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
+			tmp[0] = 0x10;
+			SYN_pkt->writeData(14+IHL[0]*4+13, tmp,1);
+			SYN_pkt->readData(14+IHL[0]*4,tcp_hd,20);
+			checksum = this->tcp_check_sum(*(uint32_t *)src_ip,*(uint32_t *)dest_ip, tcp_hd, 20);
+			checksum = htons(checksum);
+			SYN_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
+			this->sendPacket("IPv4", SYN_pkt);
+		}
+		if(ACK)
+		{
+			if(ntohl(*(uint32_t *)ack_num)-1 == (unsigned int)conn_socket->seq_num)
+			{
+				conn_socket->tcp_state = E::ESTABLISHED;
+				this->returnSystemCall(conn_socket->ap_cont.syscallUUID,0);
+			}
+			else
+				this->returnSystemCall(conn_socket->ap_cont.syscallUUID,1);
+		}
+	}
+		break;
+	case E::ESTABLISHED:
+	{
+		if(FIN)
+		{
+			//Send ACK message
+			Packet* SYN_pkt = this->clonePacket(packet);
+			SYN_pkt->writeData(14+12, dest_ip, 4);
+			SYN_pkt->writeData(14+16, src_ip, 4);
+			SYN_pkt->writeData(14+IHL[0]*4, dest_port, 2);
+			SYN_pkt->writeData(14+IHL[0]*4+2, src_port, 2);
+			tmp_num = 0;
+			SYN_pkt->writeData(14+IHL[0]*4+4, &tmp_num,4);
+			tmp_num = ntohl(*(int *)seq_num) + 1;
+			tmp_num = htonl(tmp_num);
+			SYN_pkt->writeData(14+IHL[0]*4+8, &tmp_num,4);
+			SYN_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
+			tmp[0] = 0x12;
+			SYN_pkt->writeData(14+IHL[0]*4+13, tmp,1);
+			SYN_pkt->readData(14+IHL[0]*4,tcp_hd,20);
+			checksum = this->tcp_check_sum(*(uint32_t *)src_ip,*(uint32_t *)dest_ip, tcp_hd, 20);
+			checksum = htons(checksum);
+			SYN_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
+			this->sendPacket("IPv4", SYN_pkt);
+			closing_socket->tcp_state = E::CLOSE_WAIT;
+		}
+	}
+		break;
+	case E::FIN_WAIT1:
+	{
+		if(FIN)
+		{
+			closing_socket->fin_num = ntohl(*(uint32_t *)seq_num);
+			closing_socket->tcp_state = E::FIN_WAIT2;
+		}
+		else if(ACK)
+		{
+			if((uint32_t)closing_socket->seq_num == ntohl(*(uint32_t *)ack_num)-1)
+				closing_socket->tcp_state = E::FIN_WAIT2;
+		}
+	}
+		break;
+	case E::FIN_WAIT2:
+	{
+		if(FIN)
+		{
+			closing_socket->fin_num = ntohl(*(uint32_t *)seq_num);
+			closing_socket->tcp_state = E::TIME_WAIT;
+		}
+		else if(ACK)
+		{
+			if((uint32_t)closing_socket->seq_num == ntohl(*(uint32_t *)ack_num)-1)
+				closing_socket->tcp_state = E::TIME_WAIT;
+			else
+				break;
+		}
+		tmp_num = ntohl(closing_socket->fin_num) + 1;
 		tmp_num = htonl(tmp_num);
 		//Send ACK message
-		Packet* SYN_pkt = this->clonePacket(packet);
-		SYN_pkt->writeData(14+12, dest_ip, 4);
-		SYN_pkt->writeData(14+16, src_ip, 4);
-		SYN_pkt->writeData(14+IHL[0]*4, dest_port, 2);
-		SYN_pkt->writeData(14+IHL[0]*4+2, src_port, 2);
-		SYN_pkt->writeData(14+IHL[0]*4+4, &(new_conn.seq_num),4);
-		SYN_pkt->writeData(14+IHL[0]*4+8, &tmp_num,4);
-		SYN_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
-		tmp[0] = 0x12;
-		SYN_pkt->writeData(14+IHL[0]*4+13, tmp,1);
-		SYN_pkt->readData(14+IHL[0]*4,tcp_hd,20);
+		Packet* ACK_pkt = this->clonePacket(packet);
+		ACK_pkt->writeData(14+12, dest_ip, 4);
+		ACK_pkt->writeData(14+16, src_ip, 4);
+		ACK_pkt->writeData(14+IHL[0]*4, dest_port, 2);
+		ACK_pkt->writeData(14+IHL[0]*4+2, src_port, 2);
+		ACK_pkt->writeData(14+IHL[0]*4+8, &tmp_num,4);
+		ACK_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
+		tmp[0] = 0x10;
+		ACK_pkt->writeData(14+IHL[0]*4+13, tmp,1);
+		ACK_pkt->readData(14+IHL[0]*4,tcp_hd,20);
 		checksum = this->tcp_check_sum(*(uint32_t *)src_ip,*(uint32_t *)dest_ip, tcp_hd, 20);
 		checksum = htons(checksum);
-		SYN_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
-
-		this->sendPacket("IPv4", SYN_pkt);
+		ACK_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
+		this->sendPacket("IPv4", ACK_pkt);
+		this->remove_tcplist(closing_socket->socket_fd, closing_socket->pid);
+		this->removeFileDescriptor(closing_socket->socket_fd,closing_socket->pid);
+		this->returnSystemCall(closing_socket->ap_cont.syscallUUID,0);
 	}
-	else if(!SYN && ACK)//ACK
+		break;
+	case E::LAST_ACK:
 	{
-		fprintf(stderr,"CASE: ACK\n");
-		std::list<struct tcp_context>::iterator iter;
-		struct tcp_context estb_conn;
-		//find following connection
-		iter = this->find_conn(int(ntohl(*(uint32_t *)ack_num))-1, pending_conn_list_ptr);
-		if(iter == (*pending_conn_list_ptr).end())
+		if(ACK)
 		{
-			fprintf(stderr,"CASE: ACK, FAIL TO FIND_CONN IN PENDING CONN LIST\n");
-			this->freePacket(packet);
-			return;
-		}
-		estb_conn = *iter;
-		//move the connection from pending list to estb list
-		(*pending_conn_list_ptr).erase(iter);
-		estb_conn.tcp_state = E::ESTABLISHED;
-		(*estb_conn_list_ptr).push_back(estb_conn);
-		if((*listen_socket).accept_cnt != 0)
-		{
-			fprintf(stderr,"CASE: ACK, ESTABLISHED CONNECTION\n");
-			(*listen_socket).accept_cnt--;
-			//pop the established connection and make a new file descriptor
-			struct tcp_context finished_conn;
-			int socket_fd;
-			finished_conn = (*estb_conn_list_ptr).front();
-			(*estb_conn_list_ptr).pop_front();
-			socket_fd = this->createFileDescriptor((*listen_socket).socket_fd);
-			finished_conn.socket_fd = socket_fd;
-			finished_conn.pid = (*listen_socket).pid;
-			((struct sockaddr_in *) (*listen_socket).ap_cont.client_addr)->sin_family = AF_INET;
-			((struct sockaddr_in *) (*listen_socket).ap_cont.client_addr)->sin_addr.s_addr = finished_conn.src_addr;
-			((struct sockaddr_in *) (*listen_socket).ap_cont.client_addr)->sin_port = finished_conn.src_port;
-			this->tcp_list.push_back(finished_conn);
-			this->returnSystemCall((*listen_socket).ap_cont.syscallUUID,socket_fd);
+			if((uint32_t)closing_socket->seq_num == ntohl(*(uint32_t *)ack_num)-1)
+			{
+				closing_socket->tcp_state = E::CLOSED;
+				this->remove_tcplist(closing_socket->socket_fd, closing_socket->pid);
+				this->removeFileDescriptor(closing_socket->socket_fd,closing_socket->pid);
+				this->returnSystemCall(closing_socket->ap_cont.syscallUUID,0);
+			}
 		}
 	}
-	else if(SYN && ACK)//SYNACK
-	{
-		fprintf(stderr,"CASE: SYNACK\n");
-		Packet* myPacket = this->clonePacket(packet); //prepare to send
-		//swap src and dest
-		myPacket->writeData(14+12, dest_ip, 4);
-		myPacket->writeData(14+16, src_ip, 4);
-		myPacket->writeData(14+IHL[0]*4, dest_port, 2);
-		myPacket->writeData(14+IHL[0]*4+2, src_port, 2);
-
-		//IP module will fill rest of IP header,
-		//send it to correct network interface
-		this->sendPacket("IPv4", myPacket);
+		break;
+	case E::CLOSED:
+		break;
 	}
 	//given packet is my responsibility
 	this->freePacket(packet);
