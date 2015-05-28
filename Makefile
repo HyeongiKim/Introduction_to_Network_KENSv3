@@ -49,9 +49,17 @@ test_part3: test_part2
 
 test_part4: test_part3
 	@echo "Running test cases for project4..."
-	@build/testTCP --gtest_filter="TestEnv_Congestion.TestCongestion"
+	@build/testTCP --gtest_filter="TestEnv_Congestion*"
 	@echo "Note that passing this test does not mean that you are finished."
 	@echo "Check the pcap file that you have implemented congestion control well."
+
+test_accept: test_part1
+	@echo "Running test cases for listen & accept"
+	@build/testTCP --gtest_filter=*Accept* 2> log.txt
+
+test_part2_log: test_part1
+	@echo "Running test cases for project2..."
+	@build/testTCP --gtest_filter="TestEnv_Reliable.TestAccept_*:TestEnv_Any.TestAccept_*:TestEnv_Any.TestConnect_*:TestEnv_Any.TestClose_*" 2> log.txt
 
 doxygen:
 	doxygen doxygen/Doxyfile
