@@ -108,7 +108,7 @@ void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 		this->returnSystemCall(syscallUUID,1);
 	if(iter->tcp_state == E::ESTABLISHED)
 	{
-		fprintf(stderr,"syscall_close: ESTABLISHED\n");
+		//fprintf(stderr,"syscall_close: ESTABLISHED\n");
 		uint8_t tmp;
 		uint16_t checksum=0;
 		uint8_t tcp_hd[20];
@@ -136,7 +136,7 @@ void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 	}
 	else if(iter->tcp_state == E::CLOSE_WAIT)
 	{
-		fprintf(stderr,"syscall_close: CLOSE_WAIT\n");
+		//fprintf(stderr,"syscall_close: CLOSE_WAIT\n");
 		uint8_t tmp;
 		uint16_t checksum=0;
 		uint8_t tcp_hd[20];
@@ -162,7 +162,7 @@ void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 		iter->ap_cont.syscallUUID = syscallUUID;
 		return;
 	}
-	fprintf(stderr,"CLOSE: fd: %d, pid, %d\n", param1_int,pid);
+	//fprintf(stderr,"CLOSE: fd: %d, pid, %d\n", param1_int,pid);
 	this->remove_tcplist(param1_int,pid);
 	this->removeFileDescriptor(pid,param1_int);
 	this->returnSystemCall(syscallUUID,0);
@@ -365,17 +365,17 @@ void TCPAssignment::remove_tcplist(int fd, int pid)
 	std::list<struct tcp_context>::iterator cursor;
 	
 	cursor=this->tcp_list.begin();
-	fprintf(stderr,"remmove tcplist start\n");
+	//fprintf(stderr,"remmove tcplist start\n");
 	while(cursor != this->tcp_list.end()){
 		if ((*cursor).socket_fd == fd && (*cursor).pid ==pid)
 		{
 			cursor=this->tcp_list.erase(cursor);
-			fprintf(stderr,"remove tcplist complete\n");
+			//fprintf(stderr,"remove tcplist complete\n");
 		}
 		else
 			++cursor;
 	}
-	fprintf(stderr,"remove tcplist end\n");
+	//fprintf(stderr,"remove tcplist end\n");
 }
 
 /* Find a socket. If it does not exist in list, return list.end(). */
@@ -500,7 +500,7 @@ uint16_t TCPAssignment::tcp_check_sum(uint32_t source, uint32_t dest, const uint
 
 void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 {
-	fprintf(stderr,"------------packetArrived-------------\n");
+	//fprintf(stderr,"------------packetArrived-------------\n");
 	//Simple L3 forwarding
 	//extract address
 	uint8_t src_ip[4];
@@ -555,7 +555,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
 	if(FIN)
 	{
-		fprintf(stderr,"FIN %d\n", socket_case);
+		//fprintf(stderr,"FIN %d\n", socket_case);
 	}
 
 	switch(socket_case)
@@ -568,7 +568,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
 		if(SYN)//SYN
 		{
-			fprintf(stderr,"----------------SERVER SYN handler-----------\n%x %d\n",*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
+			//fprintf(stderr,"----------------SERVER SYN handler-----------\n%x %d\n",*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
 			//check pending list size doesn't exceed backlog value
 			if(pending_conn_list_ptr->size() >= (*listen_socket).backlog)
 			{
@@ -612,8 +612,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 		}
 		if(ACK)//ACK
 		{
-			fprintf(stderr,"----------------SERVER ACK handler-----------\n%x %d\n",*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
-			fprintf(stderr,"listen socket:ACK handler>>pid: %d fd: %d\n", listen_socket->pid, listen_socket->socket_fd);
+			//fprintf(stderr,"----------------SERVER ACK handler-----------\n%x %d\n",*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
+			//fprintf(stderr,"listen socket:ACK handler>>pid: %d fd: %d\n", listen_socket->pid, listen_socket->socket_fd);
 			std::list<struct tcp_context>::iterator iter;
 			struct tcp_context estb_conn;
 			//find following connection
@@ -630,7 +630,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			(*estb_conn_list_ptr).push_back(estb_conn);
 			if((*listen_socket).accept_cnt != 0)
 			{
-				fprintf(stderr,"listen socket:ACK handler:unblock accept>>pid: %d fd: %d\n", listen_socket->pid, listen_socket->socket_fd);
+				//fprintf(stderr,"listen socket:ACK handler:unblock accept>>pid: %d fd: %d\n", listen_socket->pid, listen_socket->socket_fd);
 				(*listen_socket).accept_cnt--;
 				//pop the established connection and make a new file descriptor
 				struct tcp_context finished_conn;
@@ -658,7 +658,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
 		if(SYN)//SYN
 		{
-			fprintf(stderr,"----------------CLIENT SYN handler-----------\n%x %d\n",*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
+			//fprintf(stderr,"----------------CLIENT SYN handler-----------\n%x %d\n",*(uint32_t *)dest_ip, *(uint16_t *)dest_port);
 
 			tmp_num = ntohl(*(int *)seq_num) + 1;
 			tmp_num = htonl(tmp_num);
@@ -692,7 +692,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 		break;
 	case E::ESTABLISHED:
 	{
-		fprintf(stderr,"ESTABLISHED: start\n");
+		//fprintf(stderr,"ESTABLISHED: start\n");
 		if(FIN)
 		{
 			//Send ACK message
@@ -715,13 +715,13 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			ACK_pkt->writeData(14+IHL[0]*4+16, &checksum, 2);
 			this->sendPacket("IPv4", ACK_pkt);
 			closing_socket->tcp_state = E::CLOSE_WAIT;
-			fprintf(stderr,"ESTABLISHED: ACK_packet Sent\nack_num: %d\n", ntohl(*(unsigned int *)seq_num) + 1);
+			//fprintf(stderr,"ESTABLISHED: ACK_packet Sent\nack_num: %d\n", ntohl(*(unsigned int *)seq_num) + 1);
 		}
 	}
 		break;
 	case E::FIN_WAIT1:
 	{
-		fprintf(stderr,"FIN_WAIT1\n");
+		//fprintf(stderr,"FIN_WAIT1\n");
 		if(FIN)
 		{
 			closing_socket->fin_num = ntohl(*(uint32_t *)seq_num);
@@ -740,7 +740,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 		break;
 	case E::FIN_WAIT2:
 	{
-		fprintf(stderr,"FIN_WAIT2\n");
+		//fprintf(stderr,"FIN_WAIT2\n");
 		if(FIN && closing_socket->ack_ready)
 		{
 			closing_socket->fin_num = ntohl(*(uint32_t *)seq_num);
@@ -785,12 +785,12 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			this->addTimer(new_tidx, this->getHost()->getSystem()->getCurrentTime() + 2*ttl*1000);
 			this->removeFileDescriptor(closing_socket->socket_fd,closing_socket->pid);
 		}
-		fprintf(stderr,"FIN_WAIT2 END\n");
+		//fprintf(stderr,"FIN_WAIT2 END\n");
 	}
 		break;
 	case E::LAST_ACK:
 	{
-		fprintf(stderr,"LAST_ACK\n");
+		//fprintf(stderr,"LAST_ACK\n");
 		if(ACK)
 		{
 			if((uint32_t)closing_socket->seq_num == ntohl(*(uint32_t *)ack_num)-1)
@@ -805,7 +805,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 		break;
 	case E::TIME_WAIT:
 	{
-		fprintf(stderr,"TIME_WAIT\n");
+		//fprintf(stderr,"TIME_WAIT\n");
 		if(FIN)
 		{
 			closing_socket->fin_num = ntohl(*(uint32_t *)seq_num);
@@ -838,17 +838,17 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 
 void TCPAssignment::timerCallback(void* payload)
 {
-	fprintf(stderr,"CB\n");
+	//fprintf(stderr,"CB\n");
 	std::list< struct tcp_context >::iterator iter = this->find_tcplist(((struct timer_idx *)payload)->fd,((struct timer_idx *)payload)->pid);
 	if(iter==this->tcp_list.end())
 	{
-		fprintf(stderr,"CB:empty, pid: %d, fd: %d\n",((struct timer_idx *)payload)->pid,((struct timer_idx *)payload)->fd);
+		//fprintf(stderr,"CB:empty, pid: %d, fd: %d\n",((struct timer_idx *)payload)->pid,((struct timer_idx *)payload)->fd);
 	}
 	iter->tcp_state = E::CLOSED;
 	UUID uuid = iter->ap_cont.syscallUUID;
 	this->remove_tcplist(iter->socket_fd, iter->pid);
 	free((struct timer_idx *)payload);
-	fprintf(stderr,"CB END\n");
+	//fprintf(stderr,"CB END\n");
 	this->returnSystemCall(uuid,0);
 }
 
