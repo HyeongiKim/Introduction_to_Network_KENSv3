@@ -46,6 +46,11 @@ namespace E
 			socklen_t* client_len;
 		};
 
+	//Made for timer
+	struct timer_idx{
+		int pid;
+		int fd;
+	};
 	/* TCP CONTEXT */
 	struct tcp_context {
 		int pid;
@@ -54,7 +59,7 @@ namespace E
 		unsigned short int src_port;
 		uint32_t dest_addr;
 		unsigned short int dest_port;
-		bool is_bound = false;;
+		bool is_bound = false;
 		TCP_STATE tcp_state = CLOSED;
 		int seq_num;
 		int fin_num;
@@ -63,6 +68,8 @@ namespace E
 		std::list< struct tcp_context > estb_conn_list;
 		unsigned int backlog;
 		unsigned int accept_cnt = 0;
+		bool fin_ready = false;
+		bool ack_ready = false;
 	};
 
 class TCPAssignment : public HostModule, public NetworkModule, public SystemCallInterface, private NetworkLog, private TimerModule
@@ -89,7 +96,7 @@ private:
 	std::list< struct tcp_context >::iterator find_tcplist(int fd, int pid);
 	std::list<struct tcp_context>::iterator find_listen(uint32_t addr, uint16_t port);
 	std::list<struct tcp_context>::iterator find_client(uint32_t addr, uint16_t port);
-	std::list<struct tcp_context>::iterator get_tcp_state(uint32_t addr, uint16_t port);
+	std::list<struct tcp_context>::iterator get_tcp_state(uint32_t src_addr, uint16_t src_port, uint32_t dest_addr, uint16_t dest_port);
 	std::list< struct tcp_context >::iterator find_conn(int seq_num, std::list< struct tcp_context > *pend_conn_list_ptr);
 	uint16_t one_sum(const uint8_t* buffer, size_t size);
 	uint16_t tcp_check_sum(uint32_t source, uint32_t dest, const uint8_t* tcp_seg, size_t length);
