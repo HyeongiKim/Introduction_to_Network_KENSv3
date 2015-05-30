@@ -57,7 +57,7 @@ void TCPAssignment::systemCallback(UUID syscallUUID, int pid, const SystemCallPa
 		//this->syscall_read(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
 		break;
 	case WRITE:
-		//this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
+		this->syscall_write(syscallUUID, pid, param.param1_int, param.param2_ptr, param.param3_int);
 		break;
 	case CONNECT:
 		this->syscall_connect(syscallUUID, pid, param.param1_int,
@@ -344,6 +344,26 @@ void TCPAssignment::syscall_accept(UUID syscallUUID, int pid, int param1_int,str
 		this->returnSystemCall(syscallUUID,socket_fd);
 	}
 }
+int TCPAssignment::write_to_packet()
+
+/* Return buffer size */
+void TCPAssignment::syscall_write(UUID syscallUUID, int pid, int sock_fd, void * buffer, size_t size)
+{
+    /* Save param to write_block */
+    std::list<struct tcp_context>::iterator iter;
+    iter = find_tcplist(sock_fd, pid);
+    if(iter == this->tcp_list.end())
+        fprintf(stderr,"WRITE: Cannot find TCP_CONTEXT\n");
+    iter->write_context.syscall_UUID = syscallUUID;
+    iter->write_context.buffer = buffer;
+    iter->write_context.current_size = size;
+    
+    /* WRITE PART */
+
+    return;
+}
+
+
 
 /* Add new socket block to tcp_list
    Copy socket_fd, addr and port from args to new 'tcp_context sock' */

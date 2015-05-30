@@ -21,6 +21,8 @@
 
 #include <E/E_TimerModule.hpp>
 
+#define MSS 512
+
 namespace E
 {	
 	/* TCP STATE */
@@ -36,6 +38,81 @@ namespace E
 		TIME_WAIT,
 		CLOSE_WAIT,
 		LAST_ACK 
+	};
+
+
+	struct buf_block
+	{
+		unsigned int seq_num;
+		unsigned int ack_num;
+		size_t data_size;
+		Packet* packet;
+	};
+
+	struct write_block
+	{
+		/* data */
+        UUID syscall_UUID;
+        void* buffer;
+        size_t current_size;
+		std::list <struct buf_block> write_buffer;
+		unsigned int buf_len = 0;
+		unsigned int max_ack_num = 0;
+        unsigned int peer_cwnd = 1;// Don't forget MSS
+        
+        /*
+        //change peer cwnd to value.
+        void change_peer_cwnd(unsigned int value){
+            this->peer_cwnd = value;
+        }
+        //return write buffer's length.
+        unsigned int len_write_buffer(){
+            return this->buf_len;
+        }
+        */
+
+        //return true if buffer is full.
+        bool is_full_write_buffer(){
+            return this->buf_len>=this->peer_cwnd;
+        }
+		//push_write_buffer: push new block into write buffer
+		void push_write_buffer(int* SEQ_NUM, Packet* packet, size_t data_size){
+			struct buf_block new_block;
+			new_block.seq_num = (unsigned int)*SEQ_NUM;
+			new_block.ack_num = (unsigned int)*SEQ_NUM + data_size;
+			*SEQ_NUM = new_block.ack_num;
+			new_block.data_size = data_size;
+			new_block.packet = packet;
+			this->write_buffer.push_back(new_block);
+			this->buf_len++;
+			return;
+		}
+		//get_ack_write_buffer: find the block having ACK_NUM, return the iter
+		std::list<struct buf_block>::iterator get_ack_write_buffer(unsigned int ACK_NUM){
+			std::list<struct buf_block>::iterator iter = this->write_buffer.begin();
+			for(iter; iter != this->write_buffer.end();iter++){
+				if(iter->ack_num == ACK_NUM)
+					return iter;
+			}
+			return this->write_buffer.end();
+		}
+		//pop_acked_write_buffer: pop the buffer until acked one
+		bool pop_acked_write_buffer(unsigned int ACK_NUM){
+			//ignore if smaller than already acked num
+			if(ACK_NUM <= this->max_ack_num){
+				return false;
+			}
+			std::list<struct buf_block>::iterator iter = this->get_ack_write_buffer(ACK_NUM);
+			if(iter == this->write_buffer.end()){
+				return false;
+			}
+			else{
+				this->write_buffer.erase(this->write_buffer.begin(),++iter);
+				this->buf_len = this->write_buffer.size();
+				this->max_ack_num = ACK_NUM;
+				return true;
+			}
+		}
 	};
 
 	struct accept_param_container{
@@ -70,6 +147,7 @@ namespace E
 		unsigned int accept_cnt = 0;
 		bool fin_ready = false;
 		bool ack_ready = false;
+        struct write_block write_context;
 	};
 
 class TCPAssignment : public HostModule, public NetworkModule, public SystemCallInterface, private NetworkLog, private TimerModule
