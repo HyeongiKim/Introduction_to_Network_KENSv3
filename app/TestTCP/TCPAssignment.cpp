@@ -366,10 +366,11 @@ bool TCPAssignment::push_read_buffer(struct read_block *read_context, Packet *pa
 void TCPAssignment::pop_all_read_buffer(struct read_block *read_context)
 {
     std::list<struct buf_block>::iterator iter = read_context->read_buffer.begin();
-    while(!read_context->is_empty_read_buffer)
+    while(!read_context->is_empty_read_buffer())
     {
         iter->packet->readData(54, read_context->cursor, iter->data_size);
         read_context->cursor += iter->data_size;
+        read_context->left_size -= iter->data_size;
         this->freePacket(iter->packet);
         iter = read_context->read_buffer.erase(iter);
     }
@@ -389,13 +390,90 @@ void TCPAssignment::read_from_packet(struct read_block *read_context)
     else if(read_context->read_buffer_size() == read_context->my_cwnd)
     {
         pop_all_read_buffer(read_context);
-        read_context->my_cwnd *= 2;
-    }  
+        //read_context->my_cwnd *= 2;
+    }
 }
+/*
+//for sorting: compare function
+bool TCPAssignment::seq_num_comp(const struct buf_block& left_block, const struct buf_block& right_block)
+{
+	return left_block.seq_num < right_block.seq_num;
+}
+*/
+//sort read buffer by seq_num
+void TCPAssignment::sort_read_buffer(std::list <struct buf_block>* read_buffer)
+{
+	read_buffer->sort();
+	return;
+}
+
+//sort the read_buffer and update the maximum ack number
+void TCPAssignment::update_max_ack_num(struct read_block *read_context)
+{
+	unsigned int prev_ack_num;
+	std::list<struct buf_block>::iterator iter;
+	sort_read_buffer(&(read_context->read_buffer));
+	if(!read_context->is_empty_read_buffer())
+	{
+		iter = read_context->read_buffer.begin();
+		prev_ack_num = iter->ack_num;
+		while(++iter != read_context->read_buffer.end() && iter->seq_num == prev_ack_num)
+		{
+			prev_ack_num = iter->ack_num;
+		}
+		read_context->max_ack_num = prev_ack_num;
+	}
+	return;
+}
+
+void TCPAssignment::ack_data_packet(std::list<struct tcp_context>::iterator iter)
+{
+	uint8_t tmp;
+	uint16_t checksum=0;
+	uint8_t tcp_hd[20];
+	int ack_num;
+	Packet* new_pkt = this->allocatePacket(54);
+	//Make header first
+	new_pkt->writeData(14+12, &(iter->src_addr), 4);
+	new_pkt->writeData(14+16, &(iter->dest_addr), 4);
+	new_pkt->writeData(14+20, &(iter->src_port), 2);
+	new_pkt->writeData(14+20+2, &(iter->dest_port), 2);
+	ack_num = htonl(iter->read_context.max_ack_num);
+	new_pkt->writeData(14+20+8, &ack_num,4);
+	tmp = 0x50;
+	new_pkt->writeData(14+20+12, &tmp, 1);
+	tmp = 0x10;
+	new_pkt->writeData(14+20+13, &tmp, 1);
+	new_pkt->readData(14+20,tcp_hd,20);
+	checksum = this->tcp_check_sum(iter->src_addr,iter->dest_addr, tcp_hd, 20);
+	checksum = htons(checksum);
+	new_pkt->writeData(14+20+16, &checksum, 2);
+	this->sendPacket("IPv4",new_pkt);
+}
+
 
 void TCPAssignment::syscall_read(UUID syscallUUID, int pid, int socket_fd, void *buffer, size_t size)
 {
-    
+	/* Save param to write_block */
+	std::list<struct tcp_context>::iterator iter;
+	iter = find_tcplist(socket_fd, pid);
+	if(iter == this->tcp_list.end())
+		fprintf(stderr,"READ: Cannot find TCP_CONTEXT\n");
+	iter->read_context.syscall_UUID = syscallUUID;
+	iter->read_context.buffer = (uint8_t *)buffer;
+	iter->read_context.left_size = size;
+	iter->read_context.cursor = (uint8_t *)buffer;
+	iter->read_context.read_flag = true;
+
+	/* READ PART */
+	if(iter->read_context.is_empty_read_buffer())
+		return;
+	else
+	{
+		read_from_packet(&(iter->read_context));
+		ack_data_packet(iter);
+		return;
+	}
 }
 
 //pop_acked_write_buffer: pop the buffer until acked one
@@ -430,8 +508,10 @@ Packet *TCPAssignment::make_packet(std::list<struct tcp_context>::iterator iter,
 	uint16_t checksum=0;
 	uint8_t tcp_hd[20];
 	int seq_num;
+	uint16_t hd_len = htons(54 + payload_size);
 	Packet* new_pkt = this->allocatePacket(54 + payload_size);
 	//Make header first
+	new_pkt->writeData(14+2, &hd_len, 2);
 	new_pkt->writeData(14+12, &(iter->src_addr), 4);
 	new_pkt->writeData(14+16, &(iter->dest_addr), 4);
 	new_pkt->writeData(14+20, &(iter->src_port), 2);
@@ -669,7 +749,8 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 	uint8_t ack_num[4];
 	uint16_t checksum=0;
 	uint8_t tcp_hd[20];
-	bool SYN, ACK, FIN;
+	uint8_t hd_len[2];
+	bool SYN, ACK, FIN, SEQ;
 	int tmp_num;
 	int socket_case = E::LISTEN;
 	std::list<struct tcp_context>::iterator listen_socket;
@@ -678,7 +759,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 	std::list< struct tcp_context > *pending_conn_list_ptr;
 	std::list< struct tcp_context > *estb_conn_list_ptr;
 	//struct sockaddr *host_addr = (struct sockaddr *) malloc(sizeof(sockaddr));
-
+	packet->readData(14+2, hd_len,2);
 	packet->readData(14+12, src_ip, 4); 
 	packet->readData(14+16, dest_ip, 4);
 	packet->readData(14,IHL,1);
@@ -691,6 +772,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 	FIN = bool(tmp[0] & 0x1);
 	SYN = bool(tmp[0] & 0x2);
 	ACK = bool(tmp[0] & 0x10);
+	SEQ = bool(tmp[0] == 0x0);
 
 	//check if the corresponding socket(non-listen socket first)
 	closing_socket = get_tcp_state(*(uint32_t *)dest_ip, *(uint16_t *)dest_port,*(uint32_t *)src_ip, *(uint16_t *)src_port);
@@ -884,6 +966,18 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 				write_to_packet(closing_socket->pid,closing_socket->socket_fd);
 			}
 		}
+		if(SEQ)
+		{
+			Packet *save_pkt = this->clonePacket(packet);
+			if(push_read_buffer(&(closing_socket->read_context), save_pkt, ntohl(*(int *)seq_num), ntohs(*(uint16_t *)hd_len)-54) && closing_socket->read_context.read_flag)
+			{
+				read_from_packet(&(closing_socket->read_context));
+			}
+			if(closing_socket->read_context.read_flag)
+			{
+				ack_data_packet(closing_socket);
+			}
+		}
 	}
 		break;
 	case E::CLOSE_WAIT:
@@ -896,6 +990,18 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 				if(closing_socket->write_context.current_size == 0 && closing_socket->write_context.write_buffer.empty())
 					this->returnSystemCall(closing_socket->write_context.syscall_UUID, size_t(closing_socket->write_context.cursor - closing_socket->write_context.buffer));
 				write_to_packet(closing_socket->pid,closing_socket->socket_fd);
+			}
+		}
+		if(SEQ)
+		{
+			Packet *save_pkt = this->clonePacket(packet);
+			if(push_read_buffer(&(closing_socket->read_context), save_pkt, ntohl(*(int *)seq_num), ntohs(*(uint16_t *)hd_len)-54) && closing_socket->read_context.read_flag)
+			{
+				read_from_packet(&(closing_socket->read_context));
+			}
+			if(closing_socket->read_context.read_flag)
+			{
+				ack_data_packet(closing_socket);
 			}
 		}
 	}

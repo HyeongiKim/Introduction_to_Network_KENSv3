@@ -47,6 +47,10 @@ namespace E
 		unsigned int ack_num;
 		size_t data_size;
 		Packet* packet;
+        bool operator< (const buf_block& rhs) const
+        {
+            return seq_num < rhs.seq_num;
+        }
 	};
 
     struct read_block
@@ -59,7 +63,7 @@ namespace E
         unsigned int my_cwnd = 1;
         bool read_flag = false;
         unsigned int max_ack_num = 0;
-        
+
         //return ture if buffer is empty
         bool is_empty_read_buffer()
         {
@@ -84,7 +88,8 @@ namespace E
             }
             return this->read_buffer.end();
         }
-    }
+
+    };
 
 	struct write_block
 	{
@@ -169,6 +174,7 @@ namespace E
 		bool fin_ready = false;
 		bool ack_ready = false;
         struct write_block write_context;
+        struct read_block read_context;
 	};
 
 class TCPAssignment : public HostModule, public NetworkModule, public SystemCallInterface, private NetworkLog, private TimerModule
@@ -190,6 +196,14 @@ private:
 	void syscall_connect(UUID syscallUUID, int pid, int client_socket, struct sockaddr* connecting_addr, socklen_t len);
 	void syscall_listen(UUID syscallUUID, int pid, int fd, int backlog);
 	void syscall_accept(UUID syscallUUID, int pid, int param1_int,struct sockaddr* param2_ptr, socklen_t* param3_ptr);
+	bool seq_num_comp(const struct buf_block& left_block, const struct buf_block& right_block);
+	void sort_read_buffer(std::list <struct buf_block>* read_buffer);
+	void update_max_ack_num(struct read_block *read_context);
+	bool push_read_buffer(struct read_block *read_context, Packet *packet, int SEQ_NUM, size_t size);
+	void pop_all_read_buffer(struct read_block *read_context);
+	void read_from_packet(struct read_block *read_context);
+	void ack_data_packet(std::list<struct tcp_context>::iterator iter);
+	void syscall_read(UUID syscallUUID, int pid, int socket_fd, void *buffer, size_t size);
 	bool pop_acked_write_buffer(struct write_block *write_context, unsigned int ACK_NUM);
 	Packet *make_packet(std::list<struct tcp_context>::iterator iter, size_t payload_size);
 	void write_to_packet(int pid, int sock_fd);
