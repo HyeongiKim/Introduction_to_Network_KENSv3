@@ -454,7 +454,8 @@ void TCPAssignment::ack_data_packet(std::list<struct tcp_context>::iterator iter
 
 void TCPAssignment::syscall_read(UUID syscallUUID, int pid, int socket_fd, void *buffer, size_t size)
 {
-	/* Save param to write_block */
+	fprintf(stderr,"SYSCALL READ: START\n");
+    /* Save param to write_block */
 	std::list<struct tcp_context>::iterator iter;
 	iter = find_tcplist(socket_fd, pid);
 	if(iter == this->tcp_list.end())
@@ -466,11 +467,15 @@ void TCPAssignment::syscall_read(UUID syscallUUID, int pid, int socket_fd, void 
 	iter->read_context.read_flag = true;
 
 	/* READ PART */
-	if(iter->read_context.is_empty_read_buffer())
-		return;
+	if(iter->read_context.is_empty_read_buffer())	
+    {
+        fprintf(stderr,"SYSCALL READ: Blocked\n");   
+        return;
+    }
 	else
 	{
-		read_from_packet(&(iter->read_context));
+		fprintf(stderr,"SYSCALL READ: EXCUTE\n");
+        read_from_packet(&(iter->read_context));
 		ack_data_packet(iter);
 		return;
 	}
@@ -534,7 +539,8 @@ Packet *TCPAssignment::make_packet(std::list<struct tcp_context>::iterator iter,
 
 void TCPAssignment::write_to_packet(int pid, int sock_fd)
 {
-	std::list<struct tcp_context>::iterator iter;
+	fprintf(stderr,"WRITE TO PACKET: START\n");
+    std::list<struct tcp_context>::iterator iter;
 	struct write_block *write_context;
 	Packet* new_packet;
 	Packet* send_packet;
@@ -565,6 +571,7 @@ void TCPAssignment::write_to_packet(int pid, int sock_fd)
 /* Return buffer size */
 void TCPAssignment::syscall_write(UUID syscallUUID, int pid, int sock_fd, void * buffer, size_t size)
 {
+    fprintf(stderr,"SYSCALL WRITE: START\n");
     /* Save param to write_block */
     std::list<struct tcp_context>::iterator iter;
     iter = find_tcplist(sock_fd, pid);
@@ -576,6 +583,7 @@ void TCPAssignment::syscall_write(UUID syscallUUID, int pid, int sock_fd, void *
     iter->write_context.cursor = (uint8_t *)buffer;
 
     /* WRITE PART */
+    fprintf(stderr,"SYSCALL WRITE: EXECUTE\n");
     write_to_packet(pid,sock_fd);
     return;
 }
@@ -1070,7 +1078,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			new_tidx->pid = closing_socket->pid;
 			new_tidx->fd = closing_socket->socket_fd;
 			this->addTimer(new_tidx, this->getHost()->getSystem()->getCurrentTime() + 2*ttl*1000);
-			this->removeFileDescriptor(closing_socket->socket_fd,closing_socket->pid);
+			this->removeFileDescriptor(closing_socket->pid,closing_socket->socket_fd);
 		}
 		//fprintf(stderr,"FIN_WAIT2 END\n");
 	}
@@ -1084,7 +1092,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			{
 				closing_socket->tcp_state = E::CLOSED;
 				this->remove_tcplist(closing_socket->socket_fd, closing_socket->pid);
-				this->removeFileDescriptor(closing_socket->socket_fd,closing_socket->pid);
+				this->removeFileDescriptor(closing_socket->pid,closing_socket->socket_fd);
 				this->returnSystemCall(closing_socket->ap_cont.syscallUUID,0);
 			}
 		}
