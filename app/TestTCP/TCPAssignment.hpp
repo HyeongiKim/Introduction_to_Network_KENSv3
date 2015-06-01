@@ -47,10 +47,10 @@ namespace E
 		unsigned int ack_num;
 		size_t data_size;
 		Packet* packet;
-        bool operator< (const buf_block& rhs) const
-        {
-            return seq_num < rhs.seq_num;
-        }
+		bool operator< (const buf_block& rhs) const
+		{
+			return seq_num < rhs.seq_num;
+		}
 	};
 
     struct read_block

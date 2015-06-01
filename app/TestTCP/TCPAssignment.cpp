@@ -103,9 +103,11 @@ void TCPAssignment::syscall_socket(UUID syscallUUID, int pid, int param1_int, in
 /* Close a socket. */
 void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 {
+	//fprintf(stderr, "syscall_close: begin\n");
 	std::list< struct tcp_context >::iterator iter = find_tcplist(param1_int,pid);
 	if(iter == tcp_list.end())
 		this->returnSystemCall(syscallUUID,1);
+	//fprintf(stderr, "syscall_close: pass find_tcplist\n");
 	if(iter->tcp_state == E::ESTABLISHED)
 	{
 		//fprintf(stderr,"syscall_close: ESTABLISHED\n");
@@ -164,7 +166,9 @@ void TCPAssignment::syscall_close(UUID syscallUUID, int pid, int param1_int)
 	}
 	//fprintf(stderr,"CLOSE: fd: %d, pid, %d\n", param1_int,pid);
 	this->remove_tcplist(param1_int,pid);
+	//fprintf(stderr, "pass remove_tcplist\n");
 	this->removeFileDescriptor(pid,param1_int);
+	//fprintf(stderr, "pass removeFileDescriptor\n");
 	this->returnSystemCall(syscallUUID,0);
 }
 
@@ -393,6 +397,7 @@ void TCPAssignment::read_from_packet(struct read_block *read_context)
         //read_context->my_cwnd *= 2;
     }
 }
+
 /*
 //for sorting: compare function
 bool TCPAssignment::seq_num_comp(const struct buf_block& left_block, const struct buf_block& right_block)
@@ -400,6 +405,7 @@ bool TCPAssignment::seq_num_comp(const struct buf_block& left_block, const struc
 	return left_block.seq_num < right_block.seq_num;
 }
 */
+
 //sort read buffer by seq_num
 void TCPAssignment::sort_read_buffer(std::list <struct buf_block>* read_buffer)
 {
@@ -454,8 +460,7 @@ void TCPAssignment::ack_data_packet(std::list<struct tcp_context>::iterator iter
 
 void TCPAssignment::syscall_read(UUID syscallUUID, int pid, int socket_fd, void *buffer, size_t size)
 {
-	fprintf(stderr,"SYSCALL READ: START\n");
-    /* Save param to write_block */
+	/* Save param to write_block */
 	std::list<struct tcp_context>::iterator iter;
 	iter = find_tcplist(socket_fd, pid);
 	if(iter == this->tcp_list.end())
@@ -467,15 +472,11 @@ void TCPAssignment::syscall_read(UUID syscallUUID, int pid, int socket_fd, void 
 	iter->read_context.read_flag = true;
 
 	/* READ PART */
-	if(iter->read_context.is_empty_read_buffer())	
-    {
-        fprintf(stderr,"SYSCALL READ: Blocked\n");   
-        return;
-    }
+	if(iter->read_context.is_empty_read_buffer())
+		return;
 	else
 	{
-		fprintf(stderr,"SYSCALL READ: EXCUTE\n");
-        read_from_packet(&(iter->read_context));
+		read_from_packet(&(iter->read_context));
 		ack_data_packet(iter);
 		return;
 	}
@@ -511,7 +512,9 @@ Packet *TCPAssignment::make_packet(std::list<struct tcp_context>::iterator iter,
 {
 	uint8_t tmp;
 	uint16_t checksum=0;
-	uint8_t tcp_hd[20];
+	uint16_t window_size = htons(1);
+	uint8_t tcp_hd[20 + MSS];
+    memset(tcp_hd,0,20 + MSS);
 	int seq_num;
 	uint16_t hd_len = htons(54 + payload_size);
 	Packet* new_pkt = this->allocatePacket(54 + payload_size);
@@ -525,22 +528,24 @@ Packet *TCPAssignment::make_packet(std::list<struct tcp_context>::iterator iter,
 	new_pkt->writeData(14+20+4, &seq_num,4);
 	tmp = 0x50;
 	new_pkt->writeData(14+20+12, &tmp, 1);
-	tmp = 0x0;
+	tmp = 0x8;
 	new_pkt->writeData(14+20+13, &tmp, 1);
-	new_pkt->readData(14+20,tcp_hd,20);
-	checksum = this->tcp_check_sum(iter->src_addr,iter->dest_addr, tcp_hd, 20);
+	new_pkt->writeData(14+20+14,&window_size,2);
+	//write data into packet
+	new_pkt->writeData(54, iter->write_context.cursor, payload_size);
+    //check_sum evaluate
+	new_pkt->readData(14+20,tcp_hd,20 + MSS);
+	checksum = this->tcp_check_sum(iter->src_addr,iter->dest_addr, tcp_hd, 20 + MSS);
 	checksum = htons(checksum);
 	new_pkt->writeData(14+20+16, &checksum, 2);
 
-	//write data into packet
-	new_pkt->writeData(54, iter->write_context.cursor, payload_size);
 	return new_pkt;
 }
 
 void TCPAssignment::write_to_packet(int pid, int sock_fd)
 {
-	fprintf(stderr,"WRITE TO PACKET: START\n");
-    std::list<struct tcp_context>::iterator iter;
+	fprintf(stderr,"write_to_packet: begin\n");
+	std::list<struct tcp_context>::iterator iter;
 	struct write_block *write_context;
 	Packet* new_packet;
 	Packet* send_packet;
@@ -548,7 +553,8 @@ void TCPAssignment::write_to_packet(int pid, int sock_fd)
 	if(iter == this->tcp_list.end())
 		fprintf(stderr,"WRITE: Cannot find TCP_CONTEXT\n");
 	write_context = &(iter->write_context);
-	while(write_context->is_full_write_buffer()){
+	while(!write_context->is_full_write_buffer()){
+		fprintf(stderr,"write_to_packet: write_buffer empty\n");
 		if(write_context->current_size < MSS){
 			//should fill in
 			new_packet = make_packet(iter, write_context->current_size);
@@ -571,7 +577,6 @@ void TCPAssignment::write_to_packet(int pid, int sock_fd)
 /* Return buffer size */
 void TCPAssignment::syscall_write(UUID syscallUUID, int pid, int sock_fd, void * buffer, size_t size)
 {
-    fprintf(stderr,"SYSCALL WRITE: START\n");
     /* Save param to write_block */
     std::list<struct tcp_context>::iterator iter;
     iter = find_tcplist(sock_fd, pid);
@@ -583,7 +588,6 @@ void TCPAssignment::syscall_write(UUID syscallUUID, int pid, int sock_fd, void *
     iter->write_context.cursor = (uint8_t *)buffer;
 
     /* WRITE PART */
-    fprintf(stderr,"SYSCALL WRITE: EXECUTE\n");
     write_to_packet(pid,sock_fd);
     return;
 }
@@ -610,7 +614,7 @@ void TCPAssignment::remove_tcplist(int fd, int pid)
 	std::list<struct tcp_context>::iterator cursor;
 	
 	cursor=this->tcp_list.begin();
-	//fprintf(stderr,"remmove tcplist start\n");
+	fprintf(stderr,"remove tcplist start\n");
 	while(cursor != this->tcp_list.end()){
 		if ((*cursor).socket_fd == fd && (*cursor).pid ==pid)
 		{
@@ -620,7 +624,7 @@ void TCPAssignment::remove_tcplist(int fd, int pid)
 		else
 			++cursor;
 	}
-	//fprintf(stderr,"remove tcplist end\n");
+	fprintf(stderr,"remove tcplist end\n");
 }
 
 /* Find a socket. If it does not exist in list, return list.end(). */
@@ -970,8 +974,13 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			if(pop_acked_write_buffer(&(closing_socket->write_context), ntohl(*(int *)ack_num)))
 			{
 				if(closing_socket->write_context.current_size == 0 && closing_socket->write_context.write_buffer.empty())
-					this->returnSystemCall(closing_socket->write_context.syscall_UUID, size_t(closing_socket->write_context.cursor - closing_socket->write_context.buffer));
-				write_to_packet(closing_socket->pid,closing_socket->socket_fd);
+				{
+					size_t size = size_t(closing_socket->write_context.cursor - closing_socket->write_context.buffer);
+					this->returnSystemCall(closing_socket->write_context.syscall_UUID, size);
+					fprintf(stderr,"Size: %d\n",size);
+				}
+				else
+					write_to_packet(closing_socket->pid,closing_socket->socket_fd);
 			}
 		}
 		if(SEQ)
@@ -996,8 +1005,13 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			if(pop_acked_write_buffer(&(closing_socket->write_context), ntohl(*(int *)ack_num)))
 			{
 				if(closing_socket->write_context.current_size == 0 && closing_socket->write_context.write_buffer.empty())
-					this->returnSystemCall(closing_socket->write_context.syscall_UUID, size_t(closing_socket->write_context.cursor - closing_socket->write_context.buffer));
-				write_to_packet(closing_socket->pid,closing_socket->socket_fd);
+				{
+					size_t size = size_t(closing_socket->write_context.cursor - closing_socket->write_context.buffer);
+					this->returnSystemCall(closing_socket->write_context.syscall_UUID, size);
+					fprintf(stderr,"Size: %d\n",size);
+				}
+				else
+					write_to_packet(closing_socket->pid,closing_socket->socket_fd);
 			}
 		}
 		if(SEQ)
@@ -1078,22 +1092,28 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 			new_tidx->pid = closing_socket->pid;
 			new_tidx->fd = closing_socket->socket_fd;
 			this->addTimer(new_tidx, this->getHost()->getSystem()->getCurrentTime() + 2*ttl*1000);
-			this->removeFileDescriptor(closing_socket->pid,closing_socket->socket_fd);
+			this->removeFileDescriptor(closing_socket->pid, closing_socket->socket_fd);
 		}
 		//fprintf(stderr,"FIN_WAIT2 END\n");
 	}
 		break;
 	case E::LAST_ACK:
 	{
+		UUID syscall_UUID;
 		//fprintf(stderr,"LAST_ACK\n");
 		if(ACK)
 		{
+			//fprintf(stderr,"LAST_ACK: if(ACK)\n");
 			if((uint32_t)closing_socket->seq_num == ntohl(*(uint32_t *)ack_num)-1)
 			{
+				//fprintf(stderr,"LAST_ACK: ack num good\n");
 				closing_socket->tcp_state = E::CLOSED;
+				this->removeFileDescriptor(closing_socket->pid, closing_socket->socket_fd);
+				//fprintf(stderr,"LAST_ACK: removeFileDescriptor pass\n");
+				syscall_UUID = closing_socket->ap_cont.syscallUUID;
 				this->remove_tcplist(closing_socket->socket_fd, closing_socket->pid);
-				this->removeFileDescriptor(closing_socket->pid,closing_socket->socket_fd);
-				this->returnSystemCall(closing_socket->ap_cont.syscallUUID,0);
+				//fprintf(stderr,"LAST_ACK: remove_tcplist pass\n");
+				this->returnSystemCall(syscall_UUID,0);
 			}
 		}
 	}
@@ -1128,7 +1148,9 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 		break;
 	}
 	//given packet is my responsibility
+	//fprintf(stderr,"before freePacket\n");
 	this->freePacket(packet);
+	//fprintf(stderr,"after freePacket\n");
 }
 
 void TCPAssignment::timerCallback(void* payload)
