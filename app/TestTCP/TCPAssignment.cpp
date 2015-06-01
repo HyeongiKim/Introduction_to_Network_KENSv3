@@ -464,7 +464,7 @@ void TCPAssignment::syscall_read(UUID syscallUUID, int pid, int socket_fd, void 
 	std::list<struct tcp_context>::iterator iter;
 	iter = find_tcplist(socket_fd, pid);
 	if(iter == this->tcp_list.end())
-		fprintf(stderr,"READ: Cannot find TCP_CONTEXT\n");
+		//fprintf(stderr,"READ: Cannot find TCP_CONTEXT\n");
 	iter->read_context.syscall_UUID = syscallUUID;
 	iter->read_context.buffer = (uint8_t *)buffer;
 	iter->read_context.left_size = size;
@@ -544,7 +544,7 @@ Packet *TCPAssignment::make_packet(std::list<struct tcp_context>::iterator iter,
 
 void TCPAssignment::write_to_packet(int pid, int sock_fd)
 {
-	fprintf(stderr,"write_to_packet: begin\n");
+	//fprintf(stderr,"write_to_packet: begin\n");
 	std::list<struct tcp_context>::iterator iter;
 	struct write_block *write_context;
 	Packet* new_packet;
@@ -554,7 +554,7 @@ void TCPAssignment::write_to_packet(int pid, int sock_fd)
 		fprintf(stderr,"WRITE: Cannot find TCP_CONTEXT\n");
 	write_context = &(iter->write_context);
 	while(!write_context->is_full_write_buffer()){
-		fprintf(stderr,"write_to_packet: write_buffer empty\n");
+		//fprintf(stderr,"write_to_packet: write_buffer empty\n");
 		if(write_context->current_size < MSS){
 			//should fill in
 			new_packet = make_packet(iter, write_context->current_size);
@@ -614,7 +614,7 @@ void TCPAssignment::remove_tcplist(int fd, int pid)
 	std::list<struct tcp_context>::iterator cursor;
 	
 	cursor=this->tcp_list.begin();
-	fprintf(stderr,"remove tcplist start\n");
+	//fprintf(stderr,"remove tcplist start\n");
 	while(cursor != this->tcp_list.end()){
 		if ((*cursor).socket_fd == fd && (*cursor).pid ==pid)
 		{
@@ -624,7 +624,7 @@ void TCPAssignment::remove_tcplist(int fd, int pid)
 		else
 			++cursor;
 	}
-	fprintf(stderr,"remove tcplist end\n");
+	//fprintf(stderr,"remove tcplist end\n");
 }
 
 /* Find a socket. If it does not exist in list, return list.end(). */
@@ -977,7 +977,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 				{
 					size_t size = size_t(closing_socket->write_context.cursor - closing_socket->write_context.buffer);
 					this->returnSystemCall(closing_socket->write_context.syscall_UUID, size);
-					fprintf(stderr,"Size: %d\n",size);
+					//fprintf(stderr,"Size: %d\n",size);
 				}
 				else
 					write_to_packet(closing_socket->pid,closing_socket->socket_fd);
@@ -1008,7 +1008,7 @@ void TCPAssignment::packetArrived(std::string fromModule, Packet* packet)
 				{
 					size_t size = size_t(closing_socket->write_context.cursor - closing_socket->write_context.buffer);
 					this->returnSystemCall(closing_socket->write_context.syscall_UUID, size);
-					fprintf(stderr,"Size: %d\n",size);
+					//fprintf(stderr,"Size: %d\n",size);
 				}
 				else
 					write_to_packet(closing_socket->pid,closing_socket->socket_fd);

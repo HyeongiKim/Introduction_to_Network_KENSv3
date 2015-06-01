@@ -115,7 +115,7 @@ protected:
 				{
 					total_size += write_byte;
 					remaining -= write_byte;
-                    fprintf(stderr,"TRANSFER TEST: write(cliend_fd~) PASS\n");
+                    //fprintf(stderr,"TRANSFER TEST: write(cliend_fd~) PASS\n");
 					EXPECT_TRUE(remaining >= 0);
 					if(remaining == 0)
 						break;
@@ -123,7 +123,7 @@ protected:
 				if(write_byte < 0)
 					//break;
                 {
-                    fprintf(stderr,"TRANSFER TEST: write() FAIL\n");
+                    //fprintf(stderr,"TRANSFER TEST: write() FAIL\n");
                     break;
                 }
 			}
@@ -135,14 +135,14 @@ protected:
 				{
 					total_size += read_byte;
 					remaining -= read_byte;
-                    fprintf(stderr,"TRANSFER TEST: read(cliend_fd~) start\n");
+                    //fprintf(stderr,"TRANSFER TEST: read(cliend_fd~) start\n");
 					EXPECT_TRUE(remaining >= 0);
 					if(remaining == 0)
 						break;
 				}
 				if(buffer_size - remaining > 0)
 				{
-					fprintf(stderr,"TRANSFER TEST: read() pass\n");
+					//fprintf(stderr,"TRANSFER TEST: read() pass\n");
                     for(int j=0; j<buffer_size - remaining; j++)
 					{
 						EXPECT_TRUE(send_buffer[j] == recv_buffer[j]);
@@ -151,7 +151,7 @@ protected:
 				if(read_byte < 0)
 					//break;
                 {
-                    fprintf(stderr,"TRANSFER TEST: read() FAIL\n");
+                    //fprintf(stderr,"TRANSFER TEST: read() FAIL\n");
                     break;
                 }
 			}

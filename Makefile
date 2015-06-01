@@ -15,7 +15,6 @@ all: depend
 	done
 
 clean:
-	rm log.txt
 	rm -f *.o $(OUTPUT_DIR)/*.pcap *.pcap
 	rm -rf $(OUTPUT_DIR)/html
 	@$(MAKE) --directory=src clean
