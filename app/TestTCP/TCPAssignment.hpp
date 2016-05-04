@@ -46,6 +46,7 @@ namespace E
 		unsigned int seq_num;
 		unsigned int ack_num;
 		size_t data_size;
+		size_t read_size = 0;
 		Packet* packet;
 		bool operator< (const buf_block& rhs) const
 		{
@@ -102,7 +103,7 @@ namespace E
 		unsigned int buf_len = 0;
 		unsigned int max_ack_num = 0;
         unsigned int peer_cwnd = 1;// Don't forget MSS
-
+        bool write_flag = false;
         /*
         //change peer cwnd to value.
         void change_peer_cwnd(unsigned int value){
@@ -200,7 +201,7 @@ private:
 	void sort_read_buffer(std::list <struct buf_block>* read_buffer);
 	void update_max_ack_num(struct read_block *read_context);
 	bool push_read_buffer(struct read_block *read_context, Packet *packet, int SEQ_NUM, size_t size);
-	void pop_all_read_buffer(struct read_block *read_context);
+	void pop_all_read_buffer(struct read_block *read_context, size_t size);
 	void read_from_packet(struct read_block *read_context);
 	void ack_data_packet(std::list<struct tcp_context>::iterator iter);
 	void syscall_read(UUID syscallUUID, int pid, int socket_fd, void *buffer, size_t size);
