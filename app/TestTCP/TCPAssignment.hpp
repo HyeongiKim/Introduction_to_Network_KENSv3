@@ -21,6 +21,8 @@
 
 #include <E/E_TimerModule.hpp>
 
+#define MSS 512
+
 namespace E
 {	
 	/* TCP STATE */
@@ -36,6 +38,108 @@ namespace E
 		TIME_WAIT,
 		CLOSE_WAIT,
 		LAST_ACK 
+	};
+
+
+	struct buf_block
+	{
+		unsigned int seq_num;
+		unsigned int ack_num;
+		size_t data_size;
+		size_t read_size = 0;
+		Packet* packet;
+		bool operator< (const buf_block& rhs) const
+		{
+			return seq_num < rhs.seq_num;
+		}
+	};
+
+    struct read_block
+    {
+        UUID syscall_UUID;
+        uint8_t* buffer;
+        uint8_t* cursor;
+        size_t left_size;
+        std::list <struct buf_block> read_buffer;
+        unsigned int my_cwnd = 1;
+        bool read_flag = false;
+        unsigned int max_ack_num = 0;
+
+        //return ture if buffer is empty
+        bool is_empty_read_buffer()
+        {
+            return this->read_buffer.empty();
+        }
+
+        //return read_buffer's length
+        unsigned int read_buffer_size()
+        {
+            return this->read_buffer.size();
+        }
+
+        std::list <struct buf_block>::iterator find_read_buffer(int SEQ_NUM)
+        {
+            std::list <struct buf_block>::iterator iter;
+            for(iter = this->read_buffer.begin();iter != this->read_buffer.end(); iter++)
+            {
+                if(iter->seq_num == SEQ_NUM)
+                {
+                    return iter;
+                }
+            }
+            return this->read_buffer.end();
+        }
+
+    };
+
+	struct write_block
+	{
+		/* data */
+        UUID syscall_UUID;
+        uint8_t* buffer;
+        uint8_t* cursor;
+        size_t current_size;
+		std::list <struct buf_block> write_buffer;
+		unsigned int buf_len = 0;
+		unsigned int max_ack_num = 0;
+        unsigned int peer_cwnd = 1;// Don't forget MSS
+        bool write_flag = false;
+        /*
+        //change peer cwnd to value.
+        void change_peer_cwnd(unsigned int value){
+            this->peer_cwnd = value;
+        }
+        //return write buffer's length.
+        unsigned int len_write_buffer(){
+            return this->buf_len;
+        }
+        */
+
+        //return true if buffer is full.
+        bool is_full_write_buffer(){
+            return this->buf_len>=this->peer_cwnd;
+        }
+		//push_write_buffer: push new block into write buffer
+		void push_write_buffer(int* SEQ_NUM, Packet* packet, size_t data_size){
+			struct buf_block new_block;
+			new_block.seq_num = (unsigned int)*SEQ_NUM;
+			new_block.ack_num = (unsigned int)*SEQ_NUM + data_size;
+			*SEQ_NUM = new_block.ack_num;
+			new_block.data_size = data_size;
+			new_block.packet = packet;
+			this->write_buffer.push_back(new_block);
+			this->buf_len++;
+			return;
+		}
+		//get_ack_write_buffer: find the block having ACK_NUM, return the iter
+		std::list<struct buf_block>::iterator get_ack_write_buffer(unsigned int ACK_NUM){
+			std::list<struct buf_block>::iterator iter = this->write_buffer.begin();
+			for(iter; iter != this->write_buffer.end();iter++){
+				if(iter->ack_num == ACK_NUM)
+					return iter;
+			}
+			return this->write_buffer.end();
+		}
 	};
 
 	struct accept_param_container{
@@ -70,6 +174,8 @@ namespace E
 		unsigned int accept_cnt = 0;
 		bool fin_ready = false;
 		bool ack_ready = false;
+        struct write_block write_context;
+        struct read_block read_context;
 	};
 
 class TCPAssignment : public HostModule, public NetworkModule, public SystemCallInterface, private NetworkLog, private TimerModule
@@ -91,6 +197,18 @@ private:
 	void syscall_connect(UUID syscallUUID, int pid, int client_socket, struct sockaddr* connecting_addr, socklen_t len);
 	void syscall_listen(UUID syscallUUID, int pid, int fd, int backlog);
 	void syscall_accept(UUID syscallUUID, int pid, int param1_int,struct sockaddr* param2_ptr, socklen_t* param3_ptr);
+	bool seq_num_comp(const struct buf_block& left_block, const struct buf_block& right_block);
+	void sort_read_buffer(std::list <struct buf_block>* read_buffer);
+	void update_max_ack_num(struct read_block *read_context);
+	bool push_read_buffer(struct read_block *read_context, Packet *packet, int SEQ_NUM, size_t size);
+	void pop_all_read_buffer(struct read_block *read_context, size_t size);
+	void read_from_packet(struct read_block *read_context);
+	void ack_data_packet(std::list<struct tcp_context>::iterator iter);
+	void syscall_read(UUID syscallUUID, int pid, int socket_fd, void *buffer, size_t size);
+	bool pop_acked_write_buffer(struct write_block *write_context, unsigned int ACK_NUM);
+	Packet *make_packet(std::list<struct tcp_context>::iterator iter, size_t payload_size);
+	void write_to_packet(int pid, int sock_fd);
+	void syscall_write(UUID syscallUUID, int pid, int sock_fd, void * buffer, size_t size);
 	void add_tcplist(int fd, uint32_t addr, unsigned short int port, int pid);
 	void remove_tcplist(int fd,int pid);
 	std::list< struct tcp_context >::iterator find_tcplist(int fd, int pid);
